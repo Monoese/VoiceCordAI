@@ -1,15 +1,10 @@
 # Discord Bot for Voice Chat Using GPT4o Realtime Model
 
-This project is a Discord bot that allows users to control a voice recording session and handle interactions with a WebSocket server (such as OpenAI's real-time APIs). The bot offers various commands to manage voice recording sessions, capture and process audio, and handle real-time events.
+This project is a Discord bot that allows users to have voice communication with gpt4o realtime api.
 
 ## Features
 
-- **Voice Channel Connection**: Connects to a voice channel in Discord and can listen to audio from users in the channel.
-- **Audio Recording and Processing**: Captures audio in real-time, processes it, and encodes it to base64 for further use.
-- **Interactive Controls**: Users can start, stop, and manage recordings through message reactions.
-- **WebSocket Integration**: Sends and receives events through a WebSocket connection to a real-time server (like OpenAI’s APIs).
-- **Event Queueing and Handling**: Manages event queues for both incoming and outgoing events to handle asynchronous tasks.
-- **Bot Commands**: Provides several commands for connecting, starting sessions, and interacting with users.
+- **Voice Chat with GPT4o Realtime API**: Connects to a voice channel in Discord and can listen to audio from users in the channel.
 
 ## Setup
 
