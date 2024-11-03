@@ -1,0 +1,4 @@
+discord.py
+websockets
+voice_recv
+pydub
