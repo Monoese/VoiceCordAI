@@ -20,7 +20,7 @@ This project is a Discord bot that allows users to have voice communication with
    git clone https://github.com/Monoese/VoiceCordAI
    ```
    
-x. Create and activate a virtual environment for the project:
+2. Create and activate a virtual environment for the project:
    if you are on unix
    ```plaintext
    python -m venv venv
@@ -32,12 +32,12 @@ x. Create and activate a virtual environment for the project:
    venv\Scripts\activate
    ```
 
-2. Install the required dependencies:
+3. Install the required dependencies:
    ```plaintext
    pip install -r requirements.txt
    ```
 
-3. Set up a `.env` file in the root directory with your tokens:
+4. Set up a `.env` file in the root directory with your tokens:
    ```plaintext
    DISCORD_TOKEN=your_discord_token_here
    OPENAI_API_KEY=your_openai_api_key_here
