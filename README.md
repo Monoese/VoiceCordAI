@@ -15,10 +15,21 @@ This project is a Discord bot that allows users to have voice communication with
 
 ### Installation
 
-1. Clone the repository and navigate to the project directory.
+1. Clone the repository and navigate to the project directory:
    ```bash
-   git clone <your-repository-url>
-   cd <project-directory>
+   git clone https://github.com/Monoese/VoiceCordAI
+   ```
+   
+x. Create and activate a virtual environment for the project:
+   # if you are on unix
+   ```bash
+   python -m venv venv
+   source venv/bin/activate
+   ```
+   # if you are on windows
+   ```bash
+   py -m venv venv
+   venv\Scripts\activate
    ```
 
 2. Install the required dependencies:
