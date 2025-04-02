@@ -21,19 +21,19 @@ This project is a Discord bot that allows users to have voice communication with
    ```
    
 x. Create and activate a virtual environment for the project:
-   # if you are on unix
-   ```bash
+   if you are on unix
+   ```plaintext
    python -m venv venv
    source venv/bin/activate
    ```
-   # if you are on windows
-   ```bash
+   if you are on windows
+   ```plaintext
    py -m venv venv
    venv\Scripts\activate
    ```
 
 2. Install the required dependencies:
-   ```bash
+   ```plaintext
    pip install -r requirements.txt
    ```
 
@@ -46,9 +46,9 @@ x. Create and activate a virtual environment for the project:
 ### Running the Bot
 
 To run the bot, execute:
-```bash
+   ```plaintext
 python bot.py
-```
+   ```
 
 ## Commands
 

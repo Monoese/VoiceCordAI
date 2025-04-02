@@ -1,4 +1,5 @@
 discord.py
-websockets
-voice_recv
+discord-ext-voice-recv
+python-dotenv
 pydub
+websockets

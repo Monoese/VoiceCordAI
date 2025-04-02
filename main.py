@@ -1,23 +1,21 @@
-import discord
+import json
+import asyncio
+import base64
 import json
 import os
-import websockets
-import asyncio
-import base64
-from pathlib import Path
-from pydub import AudioSegment
+from dataclasses import dataclass, asdict
 from io import BytesIO
-import base64
-import discord
-import asyncio
-from discord.ext import commands, voice_recv
+from pathlib import Path
+from typing import Dict, Any
 
+import discord
+import websockets
 from discord import FFmpegPCMAudio
 from discord.ext import commands
+from discord.ext import voice_recv
 from dotenv import load_dotenv
+from pydub import AudioSegment
 from websockets.asyncio.client import connect
-from dataclasses import dataclass, field, asdict
-from typing import List, Optional, Dict, Any
 
 # configure paths for this project
 BASE_DIR = Path(__file__).resolve().parent
@@ -28,9 +26,7 @@ DISCORD_TOKEN = os.getenv("DISCORD_TOKEN")
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 
 # set constants
-WS_SERVER_URL = (
-    "wss://api.openai.com/v1/realtime?model=gpt-4o-realtime-preview-2024-10-01"
-)
+WS_SERVER_URL = ("wss://api.openai.com/v1/realtime?model=gpt-4o-realtime-preview-2024-10-01")
 CONNECTION_TIMEOUT = 15 * 60
 CHUNK_DURATION_MS = 500  # Duration of each chunk in milliseconds
 
@@ -171,20 +167,13 @@ class ErrorEvent(BaseEvent):
 
 
 # mapping between event name strings and event class
-EVENT_TYPE_MAPPING = {
-    # client events
-    "session.update": SessionUpdateEvent,
-    "conversation.item.create": ConversationItemCreateEvent,
-    "input_audio_buffer.append": InputAudioBufferAppendEvent,
-    "input_audio_buffer.commit": InputAudioBufferCommitEvent,
-    "response.create": ResponseCreateEvent,
-    # server events
-    "session.created": SessionCreatedEvent,
-    "session.updated": SessionUpdatedEvent,
-    "response.audio.delta": ResponseAudioDeltaEvent,
-    "response.audio.done": ResponseAudioDoneEvent,
-    "error": ErrorEvent,
-}
+EVENT_TYPE_MAPPING = {# client events
+    "session.update": SessionUpdateEvent, "conversation.item.create": ConversationItemCreateEvent,
+    "input_audio_buffer.append": InputAudioBufferAppendEvent, "input_audio_buffer.commit": InputAudioBufferCommitEvent,
+    "response.create": ResponseCreateEvent, # server events
+    "session.created": SessionCreatedEvent, "session.updated": SessionUpdatedEvent,
+    "response.audio.delta": ResponseAudioDeltaEvent, "response.audio.done": ResponseAudioDoneEvent,
+    "error": ErrorEvent, }
 
 
 # Event handler functions
@@ -222,14 +211,9 @@ async def handle_response_audio_done(event):
 
 
 # mapping between event name strings and event handlers. only for incoming events.
-EVENT_HANDLERS = {
-    # server events only
-    "error": handle_error,
-    "session.created": handle_session_created,
-    "session.updated": handle_session_updated,
-    "response.audio.delta": handle_response_audio_delta,
-    "response.audio.done": handle_response_audio_done,
-}
+EVENT_HANDLERS = {# server events only
+    "error": handle_error, "session.created": handle_session_created, "session.updated": handle_session_updated,
+    "response.audio.delta": handle_response_audio_delta, "response.audio.done": handle_response_audio_done, }
 
 
 async def audio_playback_loop(voice_client):
@@ -251,18 +235,14 @@ async def audio_playback_loop(voice_client):
 # audio codec
 def process_audio(data):
     # Convert raw PCM data to an AudioSegment for easy processing
-    audio_segment = AudioSegment(
-        data=data,
-        sample_width=2,  # 16-bit audio
+    audio_segment = AudioSegment(data=data, sample_width=2,  # 16-bit audio
         frame_rate=96000,  # Discord default
         channels=1,  # Mono
     )
 
     # Resample to 24kHz
     audio_segment = audio_segment.set_frame_rate(24000)
-    print(
-        f"Processed audio sample rate: {audio_segment.frame_rate}"
-    )  # Should output 24000
+    print(f"Processed audio sample rate: {audio_segment.frame_rate}")  # Should output 24000
 
     # Export as raw 16-bit PCM data
     return audio_segment.raw_data
@@ -275,9 +255,7 @@ def encode_audio_to_base64(pcm_data):
 
 async def enqueue_audio(audio_buffer):
     # Convert raw PCM data to an AudioSegment
-    audio_segment = AudioSegment(
-        data=bytes(audio_buffer),
-        sample_width=2,  # 16-bit PCM
+    audio_segment = AudioSegment(data=bytes(audio_buffer), sample_width=2,  # 16-bit PCM
         frame_rate=24000,  # Original sample rate of the audio
         channels=1,  # Mono
     )
@@ -295,19 +273,14 @@ async def enqueue_audio(audio_buffer):
 
 
 async def queue_session_update():
-    event = SessionUpdatedEvent(
-        event_id="event_123", type="session.update", session={"turn_detection": None}
-    )
+    event = SessionUpdatedEvent(event_id="event_123", type="session.update", session={"turn_detection": None})
     await outgoing_events.put(event)
 
 
 async def ws_handler():
     """Establish and handle a WebSocket connection session within a 15-minute limit."""
     global ws_connection
-    headers = {
-        "Authorization": "Bearer " + OPENAI_API_KEY,
-        "OpenAI-Beta": "realtime=v1",
-    }
+    headers = {"Authorization": "Bearer " + OPENAI_API_KEY, "OpenAI-Beta": "realtime=v1", }
     try:
         async with connect(WS_SERVER_URL, additional_headers=headers) as websocket:
             ws_connection = websocket  # Store active WebSocket connection
@@ -321,9 +294,7 @@ async def ws_handler():
             print("checking events in queue and send events through ws")
 
             # Wait for both tasks or timeout to expire
-            await asyncio.wait(
-                [receive_task, process_task, send_task], timeout=CONNECTION_TIMEOUT
-            )
+            await asyncio.wait([receive_task, process_task, send_task], timeout=CONNECTION_TIMEOUT)
 
             # Check if timeout reached
             if not receive_task.done() or not send_task.done():
@@ -422,11 +393,7 @@ async def on_reaction_add(reaction, user):
     if user == bot.user:
         return
 
-    if (
-        bot_state == "standby"
-        and reaction.message.id == standby_message.id
-        and reaction.emoji == "🎙"
-    ):
+    if (bot_state == "standby" and reaction.message.id == standby_message.id and reaction.emoji == "🎙"):
         # User has reacted to start recording
         bot_state = "recording"
         authority_user = user.name
@@ -437,25 +404,18 @@ async def on_reaction_add(reaction, user):
         if voice_client and isinstance(voice_client, voice_recv.VoiceRecvClient):
             sink = MyPCM16Sink()  # Initialize the custom sink
             voice_client.listen(sink)  # Start listening with the sink
-            voice_client.sink = (
-                sink  # Explicitly assign the sink to be accessible later
+            voice_client.sink = (sink  # Explicitly assign the sink to be accessible later
             )
 
             await update_standby_message_content()
-            await standby_message.edit(content=standby_message_content)
-        # Make sure to set up `ctx.voice_client.sink` with your recording sink
+            await standby_message.edit(
+                content=standby_message_content)  # Make sure to set up `ctx.voice_client.sink` with your recording sink
 
-    elif (
-        bot_state == "recording"
-        and reaction.message.id == standby_message.id
-        and reaction.emoji == "❌"
-    ):
+    elif (bot_state == "recording" and reaction.message.id == standby_message.id and reaction.emoji == "❌"):
         # If user reacts with a cancel emoji, stop recording and reset to standby
         # await stop_recording()
         bot_state = "standby"
-        await reaction.message.channel.send(
-            f"{user.display_name} canceled recording. Returning to standby."
-        )
+        await reaction.message.channel.send(f"{user.display_name} canceled recording. Returning to standby.")
 
 
 @bot.event
@@ -467,11 +427,7 @@ async def on_reaction_remove(reaction, user):
         return
 
     if (
-        bot_state == "recording"
-        and reaction.message.id == standby_message.id
-        and reaction.emoji == "🎙"
-        and user.name == authority_user
-    ):
+            bot_state == "recording" and reaction.message.id == standby_message.id and reaction.emoji == "🎙" and user.name == authority_user):
         # If the recording reaction is removed, stop recording and return to standby
         # stop recording and send the event to server
         voice_client = reaction.message.guild.voice_client
@@ -479,42 +435,25 @@ async def on_reaction_remove(reaction, user):
         if voice_client and hasattr(voice_client, "sink"):
             print("Sink exists on voice_client:", voice_client.sink)  # Debugging
             if voice_client.sink:  # Further check if sink is not None
-                pcm_data = (
-                    voice_client.sink.audio_data
-                )  # Access audio data from the sink
+                pcm_data = (voice_client.sink.audio_data)  # Access audio data from the sink
                 voice_client.stop_listening()  # Stop listening
 
                 # Check if any audio data was captured
                 if pcm_data:
-                    print(
-                        "Audio data length:", len(pcm_data)
-                    )  # Debugging: check data length
+                    print("Audio data length:", len(pcm_data))  # Debugging: check data length
                     processed_audio = process_audio(pcm_data)  # Resample and format
-                    base64_audio = encode_audio_to_base64(
-                        processed_audio
-                    )  # Encode to Base64
+                    base64_audio = encode_audio_to_base64(processed_audio)  # Encode to Base64
 
                     # initialize events and put them into the outgoing event queue
                     # input_audio_buffer.append
-                    data = {
-                        "event_id": "event_456",
-                        "type": "input_audio_buffer.append",
-                        "audio": base64_audio,
-                    }
-                    event = EVENT_TYPE_MAPPING["input_audio_buffer.append"].from_json(
-                        data
-                    )
+                    data = {"event_id": "event_456", "type": "input_audio_buffer.append", "audio": base64_audio, }
+                    event = EVENT_TYPE_MAPPING["input_audio_buffer.append"].from_json(data)
                     await outgoing_events.put(event)
 
                     # input_audio_buffer.commit
-                    data = {
-                        "event_id": "event_789",
-                        "type": "input_audio_buffer.commit",
-                    }
+                    data = {"event_id": "event_789", "type": "input_audio_buffer.commit", }
 
-                    event = EVENT_TYPE_MAPPING["input_audio_buffer.commit"].from_json(
-                        data
-                    )
+                    event = EVENT_TYPE_MAPPING["input_audio_buffer.commit"].from_json(data)
                     await outgoing_events.put(event)
 
                     # response.create
@@ -540,15 +479,11 @@ async def on_reaction_remove(reaction, user):
 
             else:
                 print("Sink was None")  # Debugging
-                await reaction.message.channel.send(
-                    "[debug] Audio sink is not avialable."
-                )
+                await reaction.message.channel.send("[debug] Audio sink is not avialable.")
         else:
             print("No voice_client or sink not set")  # Debugging
             await reaction.message.channel.send(
-                "Recording was not started or no audio data was captured."
-            )
-        # stopped recording and sent the event to server
+                "Recording was not started or no audio data was captured.")  # stopped recording and sent the event to server
 
 
 @bot.command(name="connect")
@@ -611,15 +546,8 @@ async def disconnect_ws(ctx):
 @bot.command(name="sayhi")
 async def say_hi(ctx):
     # create user message
-    data = {
-        "event_id": "evt_stPvKNm765mXF1x3F",
-        "type": "conversation.item.create",
-        "item": {
-            "type": "message",
-            "role": "user",
-            "content": [{"type": "input_text", "text": "Hello!"}],
-        },
-    }
+    data = {"event_id": "evt_stPvKNm765mXF1x3F", "type": "conversation.item.create",
+        "item": {"type": "message", "role": "user", "content": [{"type": "input_text", "text": "Hello!"}], }, }
     event = EVENT_TYPE_MAPPING["conversation.item.create"].from_json(data)
     await outgoing_events.put(event)
 
