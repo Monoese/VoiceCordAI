@@ -49,7 +49,7 @@ This project is a Discord bot that allows users to have voice communication with
 
 To run the bot, execute:
    ```plaintext
-python main.py
+   python main.py
    ```
 
 ## Commands
