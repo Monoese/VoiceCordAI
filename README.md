@@ -15,6 +15,8 @@ This project is a Discord bot that allows users to have voice communication with
 
 ### Installation
 
+0. install ffmpeg to your operating system, which is a dependency for pydub package.
+
 1. Clone the repository and navigate to the project directory:
    ```bash
    git clone https://github.com/Monoese/VoiceCordAI
