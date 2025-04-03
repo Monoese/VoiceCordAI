@@ -25,7 +25,7 @@ DISCORD_TOKEN = os.getenv("DISCORD_TOKEN")
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 
 # set constants
-WS_SERVER_URL = ("wss://api.openai.com/v1/realtime?model=gpt-4o-realtime-preview-2024-10-01")
+WS_SERVER_URL = ("wss://api.openai.com/v1/realtime?model=gpt-4o-realtime-preview-2024-12-17")
 CONNECTION_TIMEOUT = 15 * 60
 CHUNK_DURATION_MS = 500  # Duration of each chunk in milliseconds
 
