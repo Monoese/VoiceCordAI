@@ -166,10 +166,10 @@ class ErrorEvent(BaseEvent):
 
 
 # mapping between event name strings and event class
-EVENT_TYPE_MAPPING = {# client events
+EVENT_TYPE_MAPPING = {  # client events
     "session.update": SessionUpdateEvent, "conversation.item.create": ConversationItemCreateEvent,
     "input_audio_buffer.append": InputAudioBufferAppendEvent, "input_audio_buffer.commit": InputAudioBufferCommitEvent,
-    "response.create": ResponseCreateEvent, # server events
+    "response.create": ResponseCreateEvent,  # server events
     "session.created": SessionCreatedEvent, "session.updated": SessionUpdatedEvent,
     "response.audio.delta": ResponseAudioDeltaEvent, "response.audio.done": ResponseAudioDoneEvent,
     "error": ErrorEvent, }
@@ -210,7 +210,7 @@ async def handle_response_audio_done(event):
 
 
 # mapping between event name strings and event handlers. only for incoming events.
-EVENT_HANDLERS = {# server events only
+EVENT_HANDLERS = {  # server events only
     "error": handle_error, "session.created": handle_session_created, "session.updated": handle_session_updated,
     "response.audio.delta": handle_response_audio_delta, "response.audio.done": handle_response_audio_done, }
 
@@ -235,9 +235,9 @@ async def audio_playback_loop(voice_client):
 def process_audio(data):
     # Convert raw PCM data to an AudioSegment for easy processing
     audio_segment = AudioSegment(data=data, sample_width=2,  # 16-bit audio
-        frame_rate=96000,  # Discord default
-        channels=1,  # Mono
-    )
+                                 frame_rate=96000,  # Discord default
+                                 channels=1,  # Mono
+                                 )
 
     # Resample to 24kHz
     audio_segment = audio_segment.set_frame_rate(24000)
@@ -255,9 +255,9 @@ def encode_audio_to_base64(pcm_data):
 async def enqueue_audio(audio_buffer):
     # Convert raw PCM data to an AudioSegment
     audio_segment = AudioSegment(data=bytes(audio_buffer), sample_width=2,  # 16-bit PCM
-        frame_rate=24000,  # Original sample rate of the audio
-        channels=1,  # Mono
-    )
+                                 frame_rate=24000,  # Original sample rate of the audio
+                                 channels=1,  # Mono
+                                 )
 
     # Resample to 48kHz and stereo for Discord compatibility
     audio_segment = audio_segment.set_frame_rate(48000).set_channels(2)
@@ -404,7 +404,7 @@ async def on_reaction_add(reaction, user):
             sink = MyPCM16Sink()  # Initialize the custom sink
             voice_client.listen(sink)  # Start listening with the sink
             voice_client.sink = (sink  # Explicitly assign the sink to be accessible later
-            )
+                                 )
 
             await update_standby_message_content()
             await standby_message.edit(
@@ -546,7 +546,7 @@ async def disconnect_ws(ctx):
 async def say_hi(ctx):
     # create user message
     data = {"event_id": "evt_stPvKNm765mXF1x3F", "type": "conversation.item.create",
-        "item": {"type": "message", "role": "user", "content": [{"type": "input_text", "text": "Hello!"}], }, }
+            "item": {"type": "message", "role": "user", "content": [{"type": "input_text", "text": "Hello!"}], }, }
     event = EVENT_TYPE_MAPPING["conversation.item.create"].from_json(data)
     await outgoing_events.put(event)
 
