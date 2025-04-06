@@ -1,26 +1,26 @@
-# Discord Bot for Voice Chat Using GPT4o Realtime Model
+# Discord Bot for Voice Chat Using GPT4o Realtime API
 
-This project is a Discord bot that allows users to have voice communication with gpt4o realtime api.
+This project gives you a Discord bot that allows users to have voice communication with GPT-4o realtime api from OpenAI.
 
 ## Features
 
-- **Voice Chat with GPT4o Realtime API**: Connects to a voice channel in Discord and can listen to audio from users in
-  the channel.
+- **Voice Chat with GPT4o Realtime API**: The bot connects to a voice channel in Discord and have voice conversation with users empowered by GPT-4o Realtime API.
 
 ## Setup
 
 ### Prerequisites
 
-- **Python 3.8+** with `discord.py`, `websockets`, `voice_recv`, and `pydub` libraries installed
-- A Discord bot token and OpenAI API key (stored in a `.env` file)
+- **Python 3.8+**
+- A Discord bot token, which you can get after creating an application on discord developer portal, and OpenAI API key (both should be stored in a `.env` file which will be talked about later).
 
 ### Installation
 
-0. install ffmpeg to your operating system, which is a dependency for pydub package.
+0. install ffmpeg to your operating system, which is a dependency for pydub package. Make sure the "ffmpeg" command is accessible from your terminal.
 
 1. Clone the repository and navigate to the project directory:
    ```bash
    git clone https://github.com/Monoese/VoiceCordAI
+   cd <path_to_project_directory>
    ```
 
 2. Create and activate a virtual environment for the project:
@@ -40,10 +40,10 @@ This project is a Discord bot that allows users to have voice communication with
    pip install -r requirements.txt
    ```
 
-4. Set up a `.env` file in the root directory with your tokens:
+4. Set up a `.env` file in the project root directory with your tokens:
    ```bash
-   DISCORD_TOKEN=your_discord_token_here
-   OPENAI_API_KEY=your_openai_api_key_here
+   DISCORD_TOKEN=<your_discord_token_here>
+   OPENAI_API_KEY=<your_openai_api_key_here>
    ```
 
 ### Running the Bot
@@ -58,20 +58,21 @@ To run the bot, execute:
 
 ### Voice Channel Management
 
-- **`!connect`** - Bot joins the user’s current voice channel.
-- **`!disconnect`** - Bot leaves the voice channel and disconnects from the WebSocket server.
+- **`!connect`** - Let bot join the user’s current voice channel.
+- **`!disconnect`** - Let Bot leave the voice channel and disconnects from the WebSocket server.
 
 ### Recording Session Controls
 
-- **`!listen`** - Initializes a recording session. Users can control the session using reactions on the standby message.
+- **`!listen`** - Initializes a recording session. Users can control the session by adding and removing reactions on a standby message.
 - **`!-listen`** - Ends the recording session and sets the bot to idle mode.
 - **Reactions**:
     - React with `🎙` - Starts recording audio in the session.
     - Remove react `🎙` - Stops recording audio in the session and send the audio to realtime API.
+- **Playback** - The bot will start the playback of response from API as soon as a response websocket packet stream is getting received.
 
 ## Acknowledgments
 
-- OpenAI APIs for real-time interaction
+- [GPT-4o Realtime API](https://platform.openai.com/docs/guides/realtime#connect-with-websockets) - OpenAI APIs for real-time interaction
 - [discord-ext-voice-recv](https://github.com/imayhaveborkedit/discord-ext-voice-recv) - Voice receive extension package
   for discord.py
 - [discord.py](https://discordpy.readthedocs.io/) - Python wrapper for the Discord API.
