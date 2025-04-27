@@ -7,12 +7,10 @@ from discord.ext import commands
 from discord.ext import voice_recv
 from websockets.asyncio.client import connect
 
-
 from audio import AudioManager
 from config import Config
 from events import *
 from state import BotState, BotStateEnum
-
 
 audio_manager = AudioManager()
 
@@ -57,8 +55,8 @@ async def handle_response_audio_done(event):
 
 
 EVENT_HANDLERS = {"error": handle_error, "session.created": handle_session_created,
-    "session.updated": handle_session_updated, "response.audio.delta": handle_response_audio_delta,
-    "response.audio.done": handle_response_audio_done, }
+                  "session.updated": handle_session_updated, "response.audio.delta": handle_response_audio_delta,
+                  "response.audio.done": handle_response_audio_done, }
 
 
 async def queue_session_update():

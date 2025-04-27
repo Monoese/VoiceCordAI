@@ -1,4 +1,3 @@
-
 import json
 from dataclasses import dataclass, asdict
 from typing import Dict, Any
@@ -81,11 +80,8 @@ class ErrorEvent(BaseEvent):
     error: Dict[str, Any]
 
 
-
-EVENT_TYPE_MAPPING = {
-    "session.update": SessionUpdateEvent, "conversation.item.create": ConversationItemCreateEvent,
+EVENT_TYPE_MAPPING = {"session.update": SessionUpdateEvent, "conversation.item.create": ConversationItemCreateEvent,
     "input_audio_buffer.append": InputAudioBufferAppendEvent, "input_audio_buffer.commit": InputAudioBufferCommitEvent,
-    "response.create": ResponseCreateEvent,
-    "session.created": SessionCreatedEvent, "session.updated": SessionUpdatedEvent,
-    "response.audio.delta": ResponseAudioDeltaEvent, "response.audio.done": ResponseAudioDoneEvent,
-    "error": ErrorEvent, }
+    "response.create": ResponseCreateEvent, "session.created": SessionCreatedEvent,
+    "session.updated": SessionUpdatedEvent, "response.audio.delta": ResponseAudioDeltaEvent,
+    "response.audio.done": ResponseAudioDoneEvent, "error": ErrorEvent, }

@@ -1,4 +1,3 @@
-
 import asyncio
 import base64
 from io import BytesIO
@@ -56,7 +55,7 @@ class AudioManager:
     def process_audio(data):
         """Convert and process raw PCM data."""
         audio_segment = AudioSegment(data=data, sample_width=Config.SAMPLE_WIDTH, frame_rate=Config.DISCORD_FRAME_RATE,
-            channels=Config.CHANNELS)
+                                     channels=Config.CHANNELS)
 
         audio_segment = audio_segment.set_frame_rate(Config.TARGET_FRAME_RATE)
         print(f"Processed audio sample rate: {audio_segment.frame_rate}")
@@ -71,11 +70,9 @@ class AudioManager:
     async def enqueue_audio(self, audio_buffer):
         """Process and enqueue audio for playback."""
         audio_segment = AudioSegment(data=bytes(audio_buffer), sample_width=Config.SAMPLE_WIDTH,
-            frame_rate=Config.TARGET_FRAME_RATE, channels=Config.CHANNELS)
-
+                                     frame_rate=Config.TARGET_FRAME_RATE, channels=Config.CHANNELS)
 
         audio_segment = audio_segment.set_frame_rate(Config.OUTPUT_FRAME_RATE).set_channels(Config.OUTPUT_CHANNELS)
-
 
         opus_buffer = BytesIO()
         audio_segment.export(opus_buffer, format="ogg", codec="libopus")
