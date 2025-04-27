@@ -2,29 +2,23 @@ import asyncio
 import base64
 
 import discord
-import websockets
 from discord.ext import commands
 from discord.ext import voice_recv
-from websockets.asyncio.client import connect
 
 from audio import AudioManager
 from config import Config
 from events import *
 from logger import get_logger
 from state import BotState, BotStateEnum
+from websocket_manager import WebSocketManager
 
 # Set up logger for this module
 logger = get_logger(__name__)
 
 audio_manager = AudioManager()
-
 bot_state_manager = BotState()
-
-ws_connection = None
+websocket_manager = WebSocketManager()
 voice_client = None
-
-incoming_events = asyncio.Queue()
-outgoing_events = asyncio.Queue()
 
 intents = discord.Intents.all()
 
@@ -65,43 +59,13 @@ EVENT_HANDLERS = {"error": handle_error, "session.created": handle_session_creat
 
 async def queue_session_update():
     event = SessionUpdatedEvent(event_id="event_123", type="session.update", session={"turn_detection": None})
-    await outgoing_events.put(event)
+    await websocket_manager.send_event(event)
 
 
-async def ws_handler():
-    """Establish and handle a WebSocket connection session within a 15-minute limit."""
-    global ws_connection
-    headers = {"Authorization": "Bearer " + Config.OPENAI_API_KEY, "OpenAI-Beta": "realtime=v1", }
-    try:
-        async with connect(Config.WS_SERVER_URL, additional_headers=headers) as websocket:
-            ws_connection = websocket
-            logger.info("Connected to WebSocket server.")
-
-            receive_task = asyncio.create_task(receive_events(websocket))
-            logger.debug("Receiving events through WebSocket and saving to queue")
-            process_task = asyncio.create_task(process_incoming_event())
-            send_task = asyncio.create_task(send_events(websocket))
-            logger.debug("Checking events in queue and sending events through WebSocket")
-
-            await asyncio.wait([receive_task, process_task, send_task], timeout=Config.CONNECTION_TIMEOUT)
-
-            if not receive_task.done() or not send_task.done():
-                logger.warning("Connection timed out after 15 minutes. Reconnecting...")
-
-    except websockets.ConnectionClosed:
-        logger.warning("WebSocket connection closed. Reconnecting...")
-    except Exception as e:
-        logger.error(f"Error in WebSocket connection: {e}. Reconnecting...")
-    finally:
-        logger.warning("WebSocket connection failed to be recovered.")
-        ws_connection = None
-        await asyncio.sleep(1)
-        asyncio.create_task(ws_handler())
-
-
-async def process_incoming_event():
+async def process_incoming_events():
+    """Process events from the WebSocketManager's incoming queue"""
     while True:
-        event = await incoming_events.get()
+        event = await websocket_manager.get_next_event()
         logger.debug(f"Processing event in incoming queue: {event.type}")
 
         event_type = event.type
@@ -114,35 +78,7 @@ async def process_incoming_event():
         except Exception as e:
             logger.error(f"Error in handler for {event_type}: {e}")
         finally:
-            incoming_events.task_done()
-
-
-async def receive_events(websocket):
-    """Handles receiving events from the WebSocket server and adding them to the incoming queue."""
-    while True:
-        message = await websocket.recv()
-        data = json.loads(message)
-
-        event = BaseEvent.from_json(data)
-
-        if event is not None:
-            logger.debug(f"Received event: {event.type}")
-            await incoming_events.put(event)
-        else:
-            logger.warning(f"Handler for {data['type']} not available")
-
-
-async def send_events(websocket):
-    """Handles sending events from the outgoing queue to the WebSocket server."""
-    while True:
-        event = await outgoing_events.get()
-        try:
-            await websocket.send(event.to_json())
-            logger.debug(f"Sent event: {event.type}")
-        except Exception as e:
-            logger.error(f"Error sending event {event.type}: {e}")
-        finally:
-            outgoing_events.task_done()
+            websocket_manager.task_done()
 
 
 async def send_audio_events(base64_audio: str):
@@ -150,15 +86,15 @@ async def send_audio_events(base64_audio: str):
 
     data = {"event_id": "event_456", "type": "input_audio_buffer.append", "audio": base64_audio, }
     event = EVENT_TYPE_MAPPING["input_audio_buffer.append"].from_json(data)
-    await outgoing_events.put(event)
+    await websocket_manager.send_event(event)
 
     data = {"event_id": "event_789", "type": "input_audio_buffer.commit", }
     event = EVENT_TYPE_MAPPING["input_audio_buffer.commit"].from_json(data)
-    await outgoing_events.put(event)
+    await websocket_manager.send_event(event)
 
     data = {"event_id": "event_234", "type": "response.create"}
     event = EVENT_TYPE_MAPPING["response.create"].from_json(data)
-    await outgoing_events.put(event)
+    await websocket_manager.send_event(event)
 
 
 @bot.command(name="listen")
@@ -233,7 +169,7 @@ async def on_reaction_remove(reaction, user):
 
 @bot.command(name="connect")
 async def join_voice_channel(ctx):
-    global voice_client, ws_connection
+    global voice_client
 
     if ctx.author.voice is None:
         await ctx.send("You are not connected to a voice channel.")
@@ -242,7 +178,6 @@ async def join_voice_channel(ctx):
     voice_channel = ctx.author.voice.channel
 
     try:
-
         voice_client = await voice_channel.connect(cls=voice_recv.VoiceRecvClient)
         await ctx.send(f"Connected to {voice_channel}")
         if voice_client and voice_client.is_connected():
@@ -251,11 +186,12 @@ async def join_voice_channel(ctx):
             await ctx.send("Bot is not connected to a voice channel.")
 
         """Command to initiate WebSocket connection and start event handling."""
-        if ws_connection:
+        if websocket_manager.connection:
             await ctx.send("Already connected to the WebSocket server.")
             return
 
-        asyncio.create_task(ws_handler())
+        asyncio.create_task(websocket_manager.connect())
+        asyncio.create_task(process_incoming_events())
         await ctx.send("Connected to WebSocket server")
         await queue_session_update()
 
@@ -267,16 +203,14 @@ async def join_voice_channel(ctx):
 
 @bot.command(name="disconnect")
 async def disconnect_ws(ctx):
-    global voice_client, ws_connection
+    global voice_client
 
     if voice_client and voice_client.is_connected():
         await voice_client.disconnect()
         await ctx.send("Bot left voice channel and disconnected from realtime api.")
 
-    if ws_connection:
-        await ws_connection.close()
-        ws_connection = None
-
+    if websocket_manager.connection:
+        await websocket_manager.close()
         await ctx.send("Disconnected from WebSocket server.")
     else:
         await ctx.send("No active WebSocket connection to disconnect.")
