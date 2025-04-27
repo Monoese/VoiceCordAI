@@ -10,7 +10,11 @@ from websockets.asyncio.client import connect
 from audio import AudioManager
 from config import Config
 from events import *
+from logger import get_logger
 from state import BotState, BotStateEnum
+
+# Set up logger for this module
+logger = get_logger(__name__)
 
 audio_manager = AudioManager()
 
@@ -28,24 +32,24 @@ bot = commands.Bot(command_prefix="!", intents=intents)
 
 
 async def handle_error(event: ErrorEvent):
-    print(event.error)
+    logger.error(f"Error event received: {event.error}")
 
 
 async def handle_session_updated(event: SessionUpdatedEvent):
-    print(f"handling {event.type}")
+    logger.info(f"Handling event: {event.type}")
 
 
 async def handle_session_created(event: SessionCreatedEvent):
-    print(f"handling {event.type}")
+    logger.info(f"Handling event: {event.type}")
 
 
 async def handle_response_audio_delta(event):
-    print(f"handling {event.type}")
+    logger.debug(f"Handling event: {event.type}")
     base64_audio = event.delta
     decoded_audio = base64.b64decode(base64_audio)
 
     audio_manager.extend_response_buffer(decoded_audio)
-    print("Buffered audio fragment:", len(decoded_audio), "bytes")
+    logger.debug(f"Buffered audio fragment: {len(decoded_audio)} bytes")
 
 
 async def handle_response_audio_done(event):
@@ -71,25 +75,25 @@ async def ws_handler():
     try:
         async with connect(Config.WS_SERVER_URL, additional_headers=headers) as websocket:
             ws_connection = websocket
-            print("Connected to WebSocket server.")
+            logger.info("Connected to WebSocket server.")
 
             receive_task = asyncio.create_task(receive_events(websocket))
-            print("receiving events through ws and save to queue")
+            logger.debug("Receiving events through WebSocket and saving to queue")
             process_task = asyncio.create_task(process_incoming_event())
             send_task = asyncio.create_task(send_events(websocket))
-            print("checking events in queue and send events through ws")
+            logger.debug("Checking events in queue and sending events through WebSocket")
 
             await asyncio.wait([receive_task, process_task, send_task], timeout=Config.CONNECTION_TIMEOUT)
 
             if not receive_task.done() or not send_task.done():
-                print("Connection timed out after 15 minutes. Reconnecting...")
+                logger.warning("Connection timed out after 15 minutes. Reconnecting...")
 
     except websockets.ConnectionClosed:
-        print("WebSocket connection closed. Reconnecting...")
+        logger.warning("WebSocket connection closed. Reconnecting...")
     except Exception as e:
-        print(f"Error in WebSocket connection: {e}. Reconnecting...")
+        logger.error(f"Error in WebSocket connection: {e}. Reconnecting...")
     finally:
-        print("ws connection failed to be recovered.")
+        logger.warning("WebSocket connection failed to be recovered.")
         ws_connection = None
         await asyncio.sleep(1)
         asyncio.create_task(ws_handler())
@@ -98,7 +102,7 @@ async def ws_handler():
 async def process_incoming_event():
     while True:
         event = await incoming_events.get()
-        print("Processing event in incoming queue:", event.type)
+        logger.debug(f"Processing event in incoming queue: {event.type}")
 
         event_type = event.type
         handler = EVENT_HANDLERS.get(event_type)
@@ -106,9 +110,9 @@ async def process_incoming_event():
             if handler:
                 await handler(event)
             else:
-                print(f"No handler found for event type: {event_type}")
+                logger.warning(f"No handler found for event type: {event_type}")
         except Exception as e:
-            print(f"Error in handler for {event_type}: {e}")
+            logger.error(f"Error in handler for {event_type}: {e}")
         finally:
             incoming_events.task_done()
 
@@ -122,10 +126,10 @@ async def receive_events(websocket):
         event = BaseEvent.from_json(data)
 
         if event is not None:
-            print("Received event:", event.type)
+            logger.debug(f"Received event: {event.type}")
             await incoming_events.put(event)
         else:
-            print(f"handler for {data["type"]} not available")
+            logger.warning(f"Handler for {data['type']} not available")
 
 
 async def send_events(websocket):
@@ -134,7 +138,9 @@ async def send_events(websocket):
         event = await outgoing_events.get()
         try:
             await websocket.send(event.to_json())
-            print("Sent event:", event.type)
+            logger.debug(f"Sent event: {event.type}")
+        except Exception as e:
+            logger.error(f"Error sending event {event.type}: {e}")
         finally:
             outgoing_events.task_done()
 
@@ -182,7 +188,7 @@ async def on_reaction_add(reaction, user):
                 if voice_client and isinstance(voice_client, voice_recv.VoiceRecvClient):
                     sink = audio_manager.create_sink()
                     voice_client.listen(sink)
-                    print("Started new recording session with fresh sink")
+                    logger.info("Started new recording session with fresh sink")
 
 
         elif (

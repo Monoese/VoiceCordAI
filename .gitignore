@@ -10,3 +10,9 @@ __pycache__/
 
 # Ignore environment variables
 .env
+
+# Ignore dev related files
+docs/
+
+# Ignore logs directory
+logs/

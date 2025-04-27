@@ -2,6 +2,11 @@ import json
 from dataclasses import dataclass, asdict
 from typing import Dict, Any
 
+from logger import get_logger
+
+# Set up logger for this module
+logger = get_logger(__name__)
+
 
 @dataclass
 class BaseEvent:
@@ -16,10 +21,10 @@ class BaseEvent:
     def from_json(data: dict):
         event_type = data.get("type")
         if event_type in EVENT_TYPE_MAPPING:
-            print("constructing", event_type)
+            logger.debug(f"Constructing event of type: {event_type}")
             return EVENT_TYPE_MAPPING[event_type](**data)
         else:
-            print(f"Unhandled event type: {event_type}")
+            logger.warning(f"Unhandled event type: {event_type}")
             return None
 
 

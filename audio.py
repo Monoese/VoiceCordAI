@@ -7,6 +7,10 @@ from discord.ext import voice_recv
 from pydub import AudioSegment
 
 from config import Config
+from logger import get_logger
+
+# Set up logger for this module
+logger = get_logger(__name__)
 
 
 class AudioManager:
@@ -19,7 +23,7 @@ class AudioManager:
             super().__init__()
             self.audio_data = bytearray()
             self.total_bytes = 0
-            print("New sink initialized")
+            logger.debug("New audio sink initialized")
 
         def wants_opus(self) -> bool:
             return False
@@ -28,14 +32,14 @@ class AudioManager:
             if data.pcm:
                 self.audio_data.extend(data.pcm)
                 self.total_bytes += len(data.pcm)
-                print(f"Write called: Adding {len(data.pcm)} bytes. Total accumulated: {self.total_bytes} bytes")
+                logger.debug(f"Write called: Adding {len(data.pcm)} bytes. Total accumulated: {self.total_bytes} bytes")
             else:
-                print("Write called with no PCM data")
+                logger.warning("Write called with no PCM data")
 
         def cleanup(self):
-            print(f"Cleanup called. Final total bytes: {self.total_bytes}")
+            logger.debug(f"Cleanup called. Final total bytes: {self.total_bytes}")
             data_len = len(self.audio_data)
-            print(f"Length of audio_data before clear: {data_len}")
+            logger.debug(f"Length of audio_data before clear: {data_len}")
             self.audio_data.clear()
 
     def create_sink(self):
@@ -45,7 +49,7 @@ class AudioManager:
     def extend_response_buffer(self, data):
         """Add new audio data to the response buffer"""
         self.response_buffer.extend(data)
-        print(f"Added {len(data)} bytes to response buffer")
+        logger.debug(f"Added {len(data)} bytes to response buffer")
 
     def clear_response_buffer(self):
         """Clear the response buffer after processing"""
@@ -58,7 +62,7 @@ class AudioManager:
                                      channels=Config.CHANNELS)
 
         audio_segment = audio_segment.set_frame_rate(Config.TARGET_FRAME_RATE)
-        print(f"Processed audio sample rate: {audio_segment.frame_rate}")
+        logger.debug(f"Processed audio sample rate: {audio_segment.frame_rate}")
 
         return audio_segment.raw_data
 
@@ -87,13 +91,19 @@ class AudioManager:
 
             try:
                 audio_source = FFmpegPCMAudio(audio_buffer, pipe=True)
-                voice_client.play(audio_source,
-                                  after=lambda e: print(f"Finished playing audio: {e if e else 'success'}"))
+                # Create a callback function that uses the logger
+                def log_playback_finished(error):
+                    if error:
+                        logger.error(f"Error during audio playback: {error}")
+                    else:
+                        logger.debug("Finished playing audio successfully")
+
+                voice_client.play(audio_source, after=log_playback_finished)
 
                 while voice_client.is_playing():
                     await asyncio.sleep(0.1)
 
             except Exception as e:
-                print(f"Error during audio playback: {e}")
+                logger.error(f"Error during audio playback: {e}")
             finally:
                 self.output_queue.task_done()
