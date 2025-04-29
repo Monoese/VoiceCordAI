@@ -68,33 +68,6 @@ A Discord bot that enables real-time voice conversations between users and OpenA
    - Remove 🎙️ reaction to stop recording and process audio
    - React with ❌ to cancel current recording
 
-## Architecture
-
-- **Audio Processing**: Handles audio conversion and streaming
-- **State Management**: Controls bot states (idle/standby/recording)
-- **WebSocket Communication**: Manages real-time API connections
-- **Logging System**: Comprehensive error tracking and debugging
-
-## Error Handling
-
-The bot includes robust error handling for:
-- Connection issues
-- Audio processing errors
-- API communication failures
-- Invalid user interactions
-
-## Logging
-
-Logs are automatically managed with:
-- Rotating file handlers
-- Configurable log levels
-- Separate console and file outputs
-- Organized log directory structure
-
-## Contributing
-
-Contributions are welcome! Please feel free to submit pull requests.
-
 ## Acknowledgments
 
 - [OpenAI GPT-4 Realtime API](https://platform.openai.com/docs/guides/realtime)
