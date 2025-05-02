@@ -48,15 +48,15 @@ class WebSocketManager:
         """Handles receiving events from the WebSocket server"""
         while True:
             message = await self.connection.recv()
-            data = json.loads(message)
+            event_data = json.loads(message)
 
-            event = BaseEvent.from_json(data)
+            event = BaseEvent.from_json(event_data)
 
             if event is not None:
                 logger.debug(f"Received event: {event.type}")
                 await self.incoming_events.put(event)
             else:
-                logger.warning(f"Handler for {data['type']} not available")
+                logger.warning(f"Handler for {event_data['type']} not available")
 
     async def _send_events(self):
         """Handles sending events to the WebSocket server"""

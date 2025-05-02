@@ -105,7 +105,7 @@ async def start_standby(ctx):
 
 
 @bot.command(name="-listen")
-async def stop_listen(ctx):
+async def return_to_idle(ctx):
     if await bot_state_manager.reset_to_idle():
         return
     await ctx.send("Bot is already in idle state.")
@@ -202,7 +202,7 @@ async def join_voice_channel(ctx):
 
 
 @bot.command(name="disconnect")
-async def disconnect_ws(ctx):
+async def disconnect_bot(ctx):
     global voice_client
 
     if voice_client and voice_client.is_connected():

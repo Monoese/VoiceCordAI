@@ -46,19 +46,19 @@ class AudioManager:
         """Create a new sink instance"""
         return self.PCM16Sink()
 
-    def extend_response_buffer(self, data):
+    def extend_response_buffer(self, audio_data):
         """Add new audio data to the response buffer"""
-        self.response_buffer.extend(data)
-        logger.debug(f"Added {len(data)} bytes to response buffer")
+        self.response_buffer.extend(audio_data)
+        logger.debug(f"Added {len(audio_data)} bytes to response buffer")
 
     def clear_response_buffer(self):
         """Clear the response buffer after processing"""
         self.response_buffer.clear()
 
     @staticmethod
-    def process_audio(data):
+    def process_audio(raw_pcm_data):
         """Convert and process raw PCM data."""
-        audio_segment = AudioSegment(data=data, sample_width=Config.SAMPLE_WIDTH, frame_rate=Config.DISCORD_FRAME_RATE,
+        audio_segment = AudioSegment(data=raw_pcm_data, sample_width=Config.SAMPLE_WIDTH, frame_rate=Config.DISCORD_FRAME_RATE,
                                      channels=Config.CHANNELS)
 
         audio_segment = audio_segment.set_frame_rate(Config.TARGET_FRAME_RATE)
