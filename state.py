@@ -14,7 +14,8 @@ class BotStateEnum(Enum):
 class BotState:
     def __init__(self):
         self._current_state: BotStateEnum = BotStateEnum.IDLE
-        self._authority_user: Optional[str] = "anyone"
+        self._authority_user_id: Optional[str] = "anyone"
+        self._authority_user_name: Optional[str] = "anyone"
         self._standby_message: Optional[Message] = None
 
     @property
@@ -22,8 +23,12 @@ class BotState:
         return self._current_state
 
     @property
-    def authority_user(self) -> str:
-        return self._authority_user
+    def authority_user_id(self) -> str:
+        return self._authority_user_id
+
+    @authority_user_id.setter
+    def authority_user_id(self, value: str):
+        self._authority_user_id = value
 
     @property
     def standby_message(self) -> Optional[Message]:
@@ -43,7 +48,7 @@ class BotState:
                 f"- **Recording Status**: `{self._current_state.value}`\n"
                 f"---\n"
                 f"### 🧑 Authority User:\n"
-                f"> `{self._authority_user}` can control the recording actions.")
+                f"> `{self._authority_user_name}` can control the recording actions.")
 
     async def initialize_standby(self, ctx) -> bool:
         """Initialize standby state from idle."""
@@ -61,7 +66,8 @@ class BotState:
             return False
 
         self._current_state = BotStateEnum.RECORDING
-        self._authority_user = user.name
+        self.authority_user_id = user.id
+        self._authority_user_name = user.name
         await self._update_message()
         return True
 
@@ -71,7 +77,8 @@ class BotState:
             return False
 
         self._current_state = BotStateEnum.STANDBY
-        self._authority_user = "anyone"
+        self.authority_user_id = "anyone"
+        self._authority_user_name = "anyone"
         await self._update_message()
         return True
 
@@ -85,7 +92,7 @@ class BotState:
             self._standby_message = None
 
         self._current_state = BotStateEnum.IDLE
-        self._authority_user = "anyone"
+        self.authority_user_id = "anyone"
         return True
 
     async def _update_message(self):
@@ -95,4 +102,4 @@ class BotState:
 
     def is_authorized(self, user: discord.User) -> bool:
         """Check if the user is authorized to control the bot."""
-        return self._authority_user == "anyone" or user.name == self._authority_user
+        return self.authority_user_id == "anyone" or user.id == self.authority_user_id
