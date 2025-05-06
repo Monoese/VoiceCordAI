@@ -15,6 +15,9 @@ class Config:
     OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
     WS_SERVER_URL = "wss://api.openai.com/v1/realtime?model=gpt-4o-mini-realtime-preview-2024-12-17"
 
+    # Commands
+    COMMAND_PREFIX = "/"
+
     # Connection settings
     CONNECTION_TIMEOUT = 15 * 60
     CHUNK_DURATION_MS = 500

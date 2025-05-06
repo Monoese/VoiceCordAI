@@ -21,7 +21,7 @@ voice_client = None
 
 intents = discord.Intents.all()
 
-bot = commands.Bot(command_prefix="!", intents=intents)
+bot = commands.Bot(command_prefix=Config.COMMAND_PREFIX, intents=intents)
 
 
 async def handle_error(event: ErrorEvent):
