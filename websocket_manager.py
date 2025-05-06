@@ -29,7 +29,7 @@ class WebSocketManager:
         self._running.clear()
 
     async def start(self) -> None:
-        """Start the background reconnecting task (idempotent)."""
+        """Start the background-reconnecting task (idempotent)."""
         if self._main_task and not self._main_task.done():
             return
 
@@ -37,7 +37,7 @@ class WebSocketManager:
         self._main_task = asyncio.create_task(self._connect_forever())
 
     async def stop(self) -> None:
-        """Signal all loops to finish and wait for clean shutdown."""
+        """Signal all loops to finish and wait for a clean shutdown."""
         self._running.clear()
 
         if self._ws:

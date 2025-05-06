@@ -35,7 +35,7 @@ class BotState:
         return self._standby_message
 
     def get_message_content(self) -> str:
-        """Generate the standby message content based on current state."""
+        """Generate the standby message content based on the current state."""
         return (f"**🎙 Voice Recording Bot - **{self._current_state.value}** Mode**\n\n"
                 f"Here's how to control the bot:\n"
                 f"---\n"
@@ -96,7 +96,7 @@ class BotState:
         return True
 
     async def _update_message(self):
-        """Update the standby message with current state."""
+        """Update the standby message with the current state."""
         if self._standby_message:
             await self._standby_message.edit(content=self.get_message_content())
 
