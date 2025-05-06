@@ -20,7 +20,7 @@ class WebSocketManager:
         self._incoming: asyncio.Queue[BaseEvent] = asyncio.Queue()
         self._outgoing: asyncio.Queue[BaseEvent] = asyncio.Queue()
 
-        self._ws: Optional[websockets.WebSocketClientProtocol] = None
+        self._ws: Optional[websockets.client.ClientProtocol] = None
         self._receive_task: Optional[asyncio.Task] = None
         self._send_task: Optional[asyncio.Task] = None
         self._main_task: Optional[asyncio.Task] = None
