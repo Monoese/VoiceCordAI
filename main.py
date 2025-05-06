@@ -12,7 +12,6 @@ from logger import get_logger
 from state import BotState, BotStateEnum
 from websocket_manager import WebSocketManager
 
-# Set up logger for this module
 logger = get_logger(__name__)
 
 audio_manager = AudioManager()

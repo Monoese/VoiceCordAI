@@ -1,5 +1,5 @@
-import os
 import logging
+import os
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -30,5 +30,5 @@ class Config:
     # Logging settings
     LOG_LEVEL = os.getenv("LOG_LEVEL", logging.INFO)
     LOG_CONSOLE_LEVEL = os.getenv("LOG_CONSOLE_LEVEL", logging.INFO)
-    LOG_MAX_SIZE = int(os.getenv("LOG_MAX_SIZE", 5 * 1024 * 1024))  # 5 MB by default
-    LOG_BACKUP_COUNT = int(os.getenv("LOG_BACKUP_COUNT", 3))  # Keep 3 backup files by default
+    LOG_MAX_SIZE = int(os.getenv("LOG_MAX_SIZE", 5 * 1024 * 1024))
+    LOG_BACKUP_COUNT = int(os.getenv("LOG_BACKUP_COUNT", 3))

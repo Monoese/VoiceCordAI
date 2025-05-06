@@ -9,7 +9,6 @@ from pydub import AudioSegment
 from config import Config
 from logger import get_logger
 
-# Set up logger for this module
 logger = get_logger(__name__)
 
 
@@ -58,8 +57,8 @@ class AudioManager:
     @staticmethod
     def process_audio(raw_pcm_data):
         """Convert and process raw PCM data."""
-        audio_segment = AudioSegment(data=raw_pcm_data, sample_width=Config.SAMPLE_WIDTH, frame_rate=Config.DISCORD_FRAME_RATE,
-                                     channels=Config.CHANNELS)
+        audio_segment = AudioSegment(data=raw_pcm_data, sample_width=Config.SAMPLE_WIDTH,
+                                     frame_rate=Config.DISCORD_FRAME_RATE, channels=Config.CHANNELS)
 
         audio_segment = audio_segment.set_frame_rate(Config.TARGET_FRAME_RATE)
         logger.debug(f"Processed audio sample rate: {audio_segment.frame_rate}")
@@ -91,7 +90,7 @@ class AudioManager:
 
             try:
                 audio_source = FFmpegPCMAudio(audio_buffer, pipe=True)
-                # Create a callback function that uses the logger
+
                 def log_playback_finished(error):
                     if error:
                         logger.error(f"Error during audio playback: {error}")

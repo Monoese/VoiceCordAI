@@ -4,16 +4,16 @@ from typing import Dict, Any
 
 from logger import get_logger
 
-# Set up logger for this module
 logger = get_logger(__name__)
 
-
 EVENT_TYPE_MAPPING: Dict[str, "BaseEvent"] = {}
+
 
 def register_event(event_type: str):
     def wrapper(cls):
         EVENT_TYPE_MAPPING[event_type] = cls
         return cls
+
     return wrapper
 
 

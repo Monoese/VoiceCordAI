@@ -15,10 +15,7 @@ log = get_logger(__name__)
 class WebSocketManager:
     def __init__(self) -> None:
         self._url: str = Config.WS_SERVER_URL
-        self._headers = {
-            "Authorization": f"Bearer {Config.OPENAI_API_KEY}",
-            "OpenAI-Beta": "realtime=v1",
-        }
+        self._headers = {"Authorization": f"Bearer {Config.OPENAI_API_KEY}", "OpenAI-Beta": "realtime=v1", }
 
         self._incoming: asyncio.Queue[BaseEvent] = asyncio.Queue()
         self._outgoing: asyncio.Queue[BaseEvent] = asyncio.Queue()
@@ -30,7 +27,6 @@ class WebSocketManager:
 
         self._running = asyncio.Event()
         self._running.clear()
-
 
     async def start(self) -> None:
         """Start the background reconnecting task (idempotent)."""
@@ -51,10 +47,8 @@ class WebSocketManager:
             if task and not task.done():
                 task.cancel()
 
-        await asyncio.gather(
-            *(t for t in (self._receive_task, self._send_task, self._main_task) if t),
-            return_exceptions=True,
-        )
+        await asyncio.gather(*(t for t in (self._receive_task, self._send_task, self._main_task) if t),
+            return_exceptions=True, )
 
         self._ws = None
         self._receive_task = None
@@ -84,7 +78,6 @@ class WebSocketManager:
     def connection(self):
         return self._ws
 
-
     async def _connect_forever(self) -> None:
         """Reconnect with exponential back‑off until ``stop`` is called."""
         backoff = 1
@@ -108,10 +101,8 @@ class WebSocketManager:
             self._receive_task = asyncio.create_task(self._receive_loop())
             self._send_task = asyncio.create_task(self._send_loop())
 
-            done, pending = await asyncio.wait(
-                (self._receive_task, self._send_task),
-                return_when=asyncio.FIRST_EXCEPTION,
-            )
+            done, pending = await asyncio.wait((self._receive_task, self._send_task),
+                return_when=asyncio.FIRST_EXCEPTION, )
 
             for task in pending:
                 task.cancel()
