@@ -190,7 +190,7 @@ async def join_voice_channel(ctx):
             await ctx.send("Already connected to the WebSocket server.")
             return
 
-        asyncio.create_task(websocket_manager.connect())
+        await websocket_manager.start()
         asyncio.create_task(process_incoming_events())
         await ctx.send("Connected to WebSocket server")
         await queue_session_update()
@@ -210,7 +210,7 @@ async def disconnect_bot(ctx):
         await ctx.send("Bot left voice channel and disconnected from realtime api.")
 
     if websocket_manager.connection:
-        await websocket_manager.close()
+        await websocket_manager.stop()
         await ctx.send("Disconnected from WebSocket server.")
     else:
         await ctx.send("No active WebSocket connection to disconnect.")

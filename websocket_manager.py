@@ -1,89 +1,150 @@
 import asyncio
 import json
+from typing import Optional
+
 import websockets
+from websockets.exceptions import ConnectionClosed
+
 from config import Config
 from events import BaseEvent
 from logger import get_logger
 
-logger = get_logger(__name__)
+log = get_logger(__name__)
+
 
 class WebSocketManager:
-    def __init__(self):
-        self.connection = None
-        self.incoming_events = asyncio.Queue()
-        self.outgoing_events = asyncio.Queue()
-
-    async def connect(self):
-        """Establish WebSocket connection with proper headers"""
-        headers = {
-            "Authorization": "Bearer " + Config.OPENAI_API_KEY,
+    def __init__(self) -> None:
+        self._url: str = Config.WS_SERVER_URL
+        self._headers = {
+            "Authorization": f"Bearer {Config.OPENAI_API_KEY}",
             "OpenAI-Beta": "realtime=v1",
         }
-        try:
-            async with websockets.connect(Config.WS_SERVER_URL, additional_headers=headers) as websocket:
-                self.connection = websocket
-                logger.info("Connected to WebSocket server.")
 
-                receive_task = asyncio.create_task(self._receive_events())
-                send_task = asyncio.create_task(self._send_events())
+        self._incoming: asyncio.Queue[BaseEvent] = asyncio.Queue()
+        self._outgoing: asyncio.Queue[BaseEvent] = asyncio.Queue()
 
-                await asyncio.wait(
-                    [receive_task, send_task], 
-                    timeout=Config.CONNECTION_TIMEOUT
-                )
+        self._ws: Optional[websockets.WebSocketClientProtocol] = None
+        self._receive_task: Optional[asyncio.Task] = None
+        self._send_task: Optional[asyncio.Task] = None
+        self._main_task: Optional[asyncio.Task] = None
 
-                if not receive_task.done() or not send_task.done():
-                    logger.warning("Connection timed out after 15 minutes. Reconnecting...")
-        except websockets.ConnectionClosed:
-            logger.warning("WebSocket connection closed. Reconnecting...")
-        except Exception as e:
-            logger.error(f"Error in WebSocket connection: {e}. Reconnecting...")
-        finally:
-            logger.warning("WebSocket connection failed to be recovered.")
-            self.connection = None
-            await asyncio.sleep(1)
-            asyncio.create_task(self.connect())
+        self._running = asyncio.Event()
+        self._running.clear()
 
-    async def _receive_events(self):
-        """Handles receiving events from the WebSocket server"""
-        while True:
-            message = await self.connection.recv()
-            event_data = json.loads(message)
 
-            event = BaseEvent.from_json(event_data)
+    async def start(self) -> None:
+        """Start the background reconnecting task (idempotent)."""
+        if self._main_task and not self._main_task.done():
+            return
 
-            if event is not None:
-                logger.debug(f"Received event: {event.type}")
-                await self.incoming_events.put(event)
-            else:
-                logger.warning(f"Handler for {event_data['type']} not available")
+        self._running.set()
+        self._main_task = asyncio.create_task(self._connect_forever())
 
-    async def _send_events(self):
-        """Handles sending events to the WebSocket server"""
-        while True:
-            event = await self.outgoing_events.get()
+    async def stop(self) -> None:
+        """Signal all loops to finish and wait for clean shutdown."""
+        self._running.clear()
+
+        if self._ws:
+            await self._ws.close()
+
+        for task in (self._receive_task, self._send_task, self._main_task):
+            if task and not task.done():
+                task.cancel()
+
+        await asyncio.gather(
+            *(t for t in (self._receive_task, self._send_task, self._main_task) if t),
+            return_exceptions=True,
+        )
+
+        self._ws = None
+        self._receive_task = None
+        self._send_task = None
+        self._main_task = None
+
+    async def close(self) -> None:
+        await self.stop()
+
+    async def send_event(self, event: BaseEvent) -> None:
+        """Queue an event to be sent to the server."""
+        await self._outgoing.put(event)
+
+    async def get_next_event(self) -> BaseEvent:
+        """Retrieve the next inbound event (await)."""
+        return await self._incoming.get()
+
+    def task_done(self) -> None:
+        """Mark the last processed incoming event as done."""
+        self._incoming.task_done()
+
+    @property
+    def connected(self) -> bool:
+        return self._ws is not None and not self._ws.closed
+
+    @property
+    def connection(self):
+        return self._ws
+
+
+    async def _connect_forever(self) -> None:
+        """Reconnect with exponential back‑off until ``stop`` is called."""
+        backoff = 1
+        while self._running.is_set():
             try:
-                await self.connection.send(event.to_json())
-                logger.debug(f"Sent event: {event.type}")
-            except Exception as e:
-                logger.error(f"Error sending event {event.type}: {e}")
+                await self._connect_once()
+                backoff = 1
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                log.error("WebSocket error: %s – reconnecting in %ss", exc, backoff)
+                await asyncio.sleep(backoff)
+                backoff = min(backoff * 2, 60)
+
+    async def _connect_once(self) -> None:
+        """Open a single WebSocket session; returns when it closes."""
+        async with websockets.connect(self._url, additional_headers=self._headers) as ws:
+            log.info("Connected to WebSocket server → %s", self._url)
+            self._ws = ws
+
+            self._receive_task = asyncio.create_task(self._receive_loop())
+            self._send_task = asyncio.create_task(self._send_loop())
+
+            done, pending = await asyncio.wait(
+                (self._receive_task, self._send_task),
+                return_when=asyncio.FIRST_EXCEPTION,
+            )
+
+            for task in pending:
+                task.cancel()
+
+            for task in done:
+                task.result()
+
+        self._ws = None
+
+    async def _receive_loop(self) -> None:
+        """Background task: convert raw JSON → ``BaseEvent`` → queue."""
+        assert self._ws is not None
+        async for message in self._ws:
+            try:
+                event_dict = json.loads(message)
+                event = BaseEvent.from_json(event_dict)
+                if event:
+                    await self._incoming.put(event)
+                else:
+                    log.debug("Dropping unknown event type: %s", event_dict.get("type"))
+            except Exception as exc:
+                log.exception("Failed to parse message: %s", exc)
+
+    async def _send_loop(self) -> None:
+        """Background task: pop events from queue and transmit."""
+        assert self._ws is not None
+        while True:
+            event: BaseEvent = await self._outgoing.get()
+            try:
+                await self._ws.send(event.to_json())
+                log.debug("Sent event: %s", event.type)
+            except ConnectionClosed as cexc:
+                log.warning("Connection closed while sending: %s", cexc)
+                raise
             finally:
-                self.outgoing_events.task_done()
-
-    async def send_event(self, event):
-        """Add an event to the outgoing queue"""
-        await self.outgoing_events.put(event)
-
-    async def get_next_event(self):
-        """Get the next event from the incoming queue"""
-        return await self.incoming_events.get()
-
-    def task_done(self):
-        """Mark the current task as done"""
-        self.incoming_events.task_done()
-
-    async def close(self):
-        """Close the WebSocket connection"""
-        if self.connection:
-            await self.connection.close()
-            self.connection = None
+                self._outgoing.task_done()
