@@ -148,7 +148,7 @@ async def on_reaction_remove(reaction, user):
 
         if voice_client and hasattr(voice_client, "sink"):
             if voice_client.sink:
-                pcm_data = voice_client.sink.audio_data
+                pcm_data = bytes(voice_client.sink.audio_data)
                 voice_client.stop_listening()
 
                 if pcm_data:
