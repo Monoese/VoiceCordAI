@@ -38,7 +38,7 @@ async def handle_session_created(event: SessionCreatedEvent) -> None:
 
 
 async def handle_response_audio_delta(event: ResponseAudioDeltaEvent) -> None:
-    logger.debug(f"Handling event: {event.type}")
+    logger.info(f"Handling event: {event.type}")
     base64_audio = event.delta
     decoded_audio = base64.b64decode(base64_audio)
 
@@ -47,6 +47,7 @@ async def handle_response_audio_delta(event: ResponseAudioDeltaEvent) -> None:
 
 
 async def handle_response_audio_done(event: ResponseAudioDoneEvent) -> None:
+    logger.info(f"Handling event: {event.type}")
     if audio_manager.response_buffer:
         await audio_manager.enqueue_audio(audio_manager.response_buffer)
         audio_manager.clear_response_buffer()
