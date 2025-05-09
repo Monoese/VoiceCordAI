@@ -3,7 +3,7 @@ from logging.handlers import RotatingFileHandler
 from pathlib import Path
 from typing import Optional
 
-from config import Config
+from src.config.config import Config
 
 logs_dir: Path = Path(Config.BASE_DIR) / "logs"
 logs_dir.mkdir(exist_ok=True)

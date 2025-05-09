@@ -5,9 +5,9 @@ from typing import Optional
 import websockets
 from websockets.exceptions import ConnectionClosed
 
-from config import Config
-from events import BaseEvent
-from logger import get_logger
+from src.config.config import Config
+from src.websocket.events.events import BaseEvent
+from src.utils.logger import get_logger
 
 log = get_logger(__name__)
 

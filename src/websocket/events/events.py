@@ -2,7 +2,7 @@ import json
 from dataclasses import dataclass, asdict
 from typing import Dict, Any
 
-from logger import get_logger
+from src.utils.logger import get_logger
 
 logger = get_logger(__name__)
 

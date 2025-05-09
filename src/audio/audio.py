@@ -7,8 +7,8 @@ from discord import FFmpegPCMAudio, User
 from discord.ext import voice_recv
 from pydub import AudioSegment
 
-from config import Config
-from logger import get_logger
+from src.config.config import Config
+from src.utils.logger import get_logger
 
 logger = get_logger(__name__)
 
