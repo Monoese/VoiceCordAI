@@ -78,12 +78,12 @@ Before you start, make sure you have:
    
    Windows:
    ```bash
-   py src/bot/main.py
+   py -m src.bot.main
    ```
    
    macOS/Linux:
    ```bash
-   python src/bot/main.py
+   python -m src.bot.main
    ```
 
 2. **Available Commands**
