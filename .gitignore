@@ -16,3 +16,4 @@ docs/
 
 # Ignore logs directory
 logs/
+.aider*

@@ -13,11 +13,11 @@ log = get_logger(__name__)
 
 
 class WebSocketManager:
-    def __init__(self) -> None:
+    def __init__(self, event_handler_instance) -> None:
         self._url: str = Config.WS_SERVER_URL
         self._headers = {"Authorization": f"Bearer {Config.OPENAI_API_KEY}", "OpenAI-Beta": "realtime=v1", }
+        self.event_handler = event_handler_instance
 
-        self._incoming: asyncio.Queue[BaseEvent] = asyncio.Queue()
         self._outgoing: asyncio.Queue[BaseEvent] = asyncio.Queue()
 
         self._ws: Optional[websockets.client.ClientProtocol] = None
@@ -61,14 +61,6 @@ class WebSocketManager:
     async def send_event(self, event: BaseEvent) -> None:
         """Queue an event to be sent to the server."""
         await self._outgoing.put(event)
-
-    async def get_next_event(self) -> BaseEvent:
-        """Retrieve the next inbound event (await)."""
-        return await self._incoming.get()
-
-    def task_done(self) -> None:
-        """Mark the last processed incoming event as done."""
-        self._incoming.task_done()
 
     @property
     def connected(self) -> bool:
@@ -120,7 +112,7 @@ class WebSocketManager:
                 event_dict = json.loads(message)
                 event = BaseEvent.from_json(event_dict)
                 if event:
-                    await self._incoming.put(event)
+                    await self.event_handler.dispatch_event(event)
                 else:
                     log.debug("Dropping unknown event type: %s", event_dict.get("type"))
             except Exception as exc:
