@@ -162,8 +162,8 @@ class VoiceCog(commands.Cog):
             try:
                 self.voice_client = await voice_channel.connect(cls=voice_recv.VoiceRecvClient)
                 await ctx.send(f"Connected to {voice_channel.name}")
-            except discord.ClientException:
-                await ctx.send("Already connected to a voice channel or failed to connect.")
+            except discord.DiscordException as e:
+                await ctx.send(f"Already connected to a voice channel or failed to connect: : {str(e)}")
                 return
             except Exception as e:
                 await ctx.send(f"An error occurred during connection: {str(e)}")
@@ -211,8 +211,11 @@ class VoiceCog(commands.Cog):
             await ctx.send("Bot is not in a voice channel.")
 
         if self.websocket_manager.connected:
-            await self.websocket_manager.stop()
-            await ctx.send("Disconnected from WebSocket server.")
+            try:
+                await self.websocket_manager.stop()
+                await ctx.send("Disconnected from WebSocket server.")
+            except Exception as e:
+                logger.error(f"Failed to disconnect from WebSocket server: {e}")
 
 
 async def setup(bot: commands.Bot):
