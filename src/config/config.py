@@ -8,6 +8,11 @@ from dotenv import load_dotenv
 load_dotenv()
 
 
+class ConfigError(Exception):
+    """Custom exception for configuration errors."""
+    pass
+
+
 class Config:
     # Base directory
     BASE_DIR: Path = Path(__file__).resolve().parent
@@ -36,3 +41,14 @@ class Config:
     LOG_CONSOLE_LEVEL: Union[int, str] = os.getenv("LOG_CONSOLE_LEVEL", logging.INFO)
     LOG_MAX_SIZE: int = int(os.getenv("LOG_MAX_SIZE", 5 * 1024 * 1024))
     LOG_BACKUP_COUNT: int = int(os.getenv("LOG_BACKUP_COUNT", 3))
+
+    @classmethod
+    def validate(cls) -> None:
+        """Validate required configuration variables."""
+        if not cls.DISCORD_TOKEN:
+            raise ConfigError("DISCORD_TOKEN environment variable not set or empty.")
+        if not cls.OPENAI_API_KEY:
+            raise ConfigError("OPENAI_API_KEY environment variable not set or empty.")
+
+# Validate configuration on import
+Config.validate()
