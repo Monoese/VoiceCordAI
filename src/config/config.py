@@ -15,7 +15,7 @@ class ConfigError(Exception):
 
 class Config:
     # Base directory
-    BASE_DIR: Path = Path(__file__).resolve().parent
+    BASE_DIR: Path = Path(__file__).resolve().parent.parent.parent
     # Discord and OpenAI API settings
     DISCORD_TOKEN: Optional[str] = os.getenv("DISCORD_TOKEN")
     OPENAI_API_KEY: Optional[str] = os.getenv("OPENAI_API_KEY")
