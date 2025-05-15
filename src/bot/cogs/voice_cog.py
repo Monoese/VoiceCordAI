@@ -1,4 +1,5 @@
 import asyncio
+import uuid
 from typing import Optional
 
 import discord
@@ -25,21 +26,23 @@ class VoiceCog(commands.Cog):
         self._playback_task: Optional[asyncio.Task] = None
 
     async def _queue_session_update(self) -> None:
-        event = SessionUpdatedEvent(event_id="event_123", type="session.update", session={"turn_detection": None})
+        event = SessionUpdatedEvent(event_id=f"event_{uuid.uuid4()}", type="session.update",
+                                    session={"turn_detection": None})
         await self.websocket_manager.send_event(event)
 
     async def _send_audio_events(self, base64_audio: str) -> None:
         """Helper function to send audio-related events to the server."""
 
-        append_event_data = {"event_id": "event_456", "type": "input_audio_buffer.append", "audio": base64_audio}
+        append_event_data = {"event_id": f"event_{uuid.uuid4()}", "type": "input_audio_buffer.append",
+                             "audio": base64_audio}
         append_event = EVENT_TYPE_MAPPING["input_audio_buffer.append"](**append_event_data)
         await self.websocket_manager.send_event(append_event)
 
-        commit_event_data = {"event_id": "event_789", "type": "input_audio_buffer.commit"}
+        commit_event_data = {"event_id": f"event_{uuid.uuid4()}", "type": "input_audio_buffer.commit"}
         commit_event = EVENT_TYPE_MAPPING["input_audio_buffer.commit"](**commit_event_data)
         await self.websocket_manager.send_event(commit_event)
 
-        response_create_data = {"event_id": "event_234", "type": "response.create"}
+        response_create_data = {"event_id": f"event_{uuid.uuid4()}", "type": "response.create"}
         response_create_event = EVENT_TYPE_MAPPING["response.create"](**response_create_data)
         await self.websocket_manager.send_event(response_create_event)
 
