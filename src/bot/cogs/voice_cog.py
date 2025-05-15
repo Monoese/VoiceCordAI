@@ -9,7 +9,7 @@ from discord.ext import voice_recv
 from src.audio.audio import AudioManager
 from src.state.state import BotState, BotStateEnum
 from src.utils.logger import get_logger
-from src.websocket.events.events import EVENT_TYPE_MAPPING, SessionUpdatedEvent
+from src.websocket.events.events import EVENT_TYPE_MAPPING, SessionUpdateEvent
 from src.websocket.manager import WebSocketManager
 
 logger = get_logger(__name__)
@@ -26,8 +26,8 @@ class VoiceCog(commands.Cog):
         self._playback_task: Optional[asyncio.Task] = None
 
     async def _queue_session_update(self) -> None:
-        event = SessionUpdatedEvent(event_id=f"event_{uuid.uuid4()}", type="session.update",
-                                    session={"turn_detection": None})
+        event = SessionUpdateEvent(event_id=f"event_{uuid.uuid4()}", type="session.update",
+                                   session={"turn_detection": None})
         await self.websocket_manager.send_event(event)
 
     async def _send_audio_events(self, base64_audio: str) -> None:
