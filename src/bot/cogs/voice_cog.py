@@ -222,5 +222,7 @@ class VoiceCog(commands.Cog):
 
 
 async def setup(bot: commands.Bot):
-    # need to be defined if used as extension
-    pass
+    raise NotImplementedError(
+        "VoiceCog requires dependencies (audio_manager, bot_state_manager, websocket_manager) and cannot be loaded as a standard extension. "
+        "Instantiate and add it manually in your main script."
+    )
