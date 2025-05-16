@@ -1,3 +1,18 @@
+"""
+WebSocket Manager module for handling WebSocket connections to external services.
+
+This module provides the WebSocketManager class which:
+- Establishes and maintains WebSocket connections
+- Handles reconnection with exponential backoff on connection failures
+- Sends events to the WebSocket server
+- Receives and processes events from the WebSocket server
+- Manages background tasks for sending and receiving data
+
+The manager uses asyncio for asynchronous operation and provides a clean
+interface for other components to send events without worrying about
+the underlying connection details.
+"""
+
 import asyncio
 import json
 from typing import Optional
@@ -9,10 +24,24 @@ from src.config.config import Config
 from src.websocket.events.events import BaseEvent
 from src.utils.logger import get_logger
 
+# Configure logger for this module
 log = get_logger(__name__)
 
 
 class WebSocketManager:
+    """
+    Manages WebSocket connections to external services.
+
+    This class handles:
+    - Establishing and maintaining WebSocket connections
+    - Reconnecting automatically with exponential backoff on failures
+    - Sending events to the WebSocket server via a queue system
+    - Receiving events from the WebSocket server and dispatching them
+    - Managing background tasks for connection, sending, and receiving
+
+    The manager provides a simple interface for other components to send events
+    without having to worry about connection state or reconnection logic.
+    """
     def __init__(self, event_handler_instance) -> None:
         self._url: str = Config.WS_SERVER_URL
         self._headers = {"Authorization": f"Bearer {Config.OPENAI_API_KEY}", "OpenAI-Beta": "realtime=v1", }
