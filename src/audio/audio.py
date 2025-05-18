@@ -223,11 +223,12 @@ class AudioManager:
         Args:
             voice_client: The Discord voice client to use for playback
         """
-        while True:
-            # Wait for an audio buffer to be available in the queue
-            audio_buffer = await self.output_queue.get()
-
-            try:
+        try:
+            while True:
+                # Wait for an audio buffer to be available in the queue
+                audio_buffer = await self.output_queue.get()
+                # Create an event that notifies the end of a playback
+                playback_done = asyncio.Event()
                 # Create an audio source from the buffer
                 audio_source = FFmpegPCMAudio(audio_buffer, pipe=True)
 
@@ -238,16 +239,16 @@ class AudioManager:
                         logger.error(f"Error during audio playback: {error}")
                     else:
                         logger.debug("Finished playing audio successfully")
+                    playback_done.set()
 
                 # Start playback
                 voice_client.play(audio_source, after=log_playback_finished)
 
                 # Wait for playback to complete
-                while voice_client.is_playing():
-                    await asyncio.sleep(0.1)
+                await playback_done.wait()
 
-            except Exception as e:
-                logger.error(f"Error during audio playback: {e}")
-            finally:
-                # Mark this item as processed
-                self.output_queue.task_done()
+        except Exception as e:
+            logger.error(f"Error during audio playback: {e}")
+        finally:
+            # Mark this item as processed
+            self.output_queue.task_done()
