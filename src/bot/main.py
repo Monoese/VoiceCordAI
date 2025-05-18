@@ -11,6 +11,8 @@ The bot is configured to use the VoiceCog for handling voice-related commands an
 """
 
 import asyncio
+import logging
+
 import discord
 from discord.ext import commands
 
@@ -21,6 +23,9 @@ from src.state.state import BotState
 from src.utils.logger import get_logger
 from src.websocket.event_handler import WebSocketEventHandler
 from src.websocket.manager import WebSocketManager
+
+# Set up discord.py's colored console logging
+discord.utils.setup_logging(level=logging.INFO, root=False)
 
 # Configure logger for this module
 logger = get_logger(__name__)
