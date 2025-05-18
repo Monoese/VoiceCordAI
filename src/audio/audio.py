@@ -182,31 +182,17 @@ class AudioManager:
 
     async def enqueue_audio(self, audio_buffer: ByteString) -> None:
         """
-        Process raw audio data and enqueue it for playback in Discord.
+        Enqueue raw PCM audio data for playback in Discord.
 
-        This method:
-        1. Converts raw PCM data to an AudioSegment
-        2. Resamples the audio to the configured output frame rate and channel count
-        3. Exports the audio to Opus format (required by Discord)
-        4. Adds the processed audio to the playback queue
+        This method puts the raw PCM audio in a buffer for FFmpegPCMAudio
+        to handle resampling and encoding on the fly.
 
         Args:
-            audio_buffer: Raw audio data to process and enqueue
+            audio_buffer: Raw PCM data (e.g. 24kHz mono s16le) to enqueue
         """
-        # Create an AudioSegment from the raw PCM data
-        audio_segment = AudioSegment(data=bytes(audio_buffer), sample_width=Config.SAMPLE_WIDTH,
-                                     frame_rate=Config.TARGET_FRAME_RATE, channels=Config.CHANNELS)
-
-        # Resample to the output frame rate and channel count
-        audio_segment = audio_segment.set_frame_rate(Config.OUTPUT_FRAME_RATE).set_channels(Config.OUTPUT_CHANNELS)
-
-        # Export to Opus format (required by Discord)
-        opus_buffer = BytesIO()
-        audio_segment.export(opus_buffer, format="ogg", codec="libopus")
-        opus_buffer.seek(0)  # Reset buffer position to beginning
-
-        # Add to playback queue
-        await self.output_queue.put(opus_buffer)
+        # Wrap raw PCM data in a buffer for FFmpegPCMAudio to read and resample
+        pcm_buffer = BytesIO(bytes(audio_buffer))
+        await self.output_queue.put(pcm_buffer)
 
     async def playback_loop(self, voice_client: voice_recv.VoiceRecvClient) -> None:
         """
@@ -230,7 +216,12 @@ class AudioManager:
                 # Create an event that notifies the end of a playback
                 playback_done = asyncio.Event()
                 # Create an audio source from the buffer
-                audio_source = FFmpegPCMAudio(audio_buffer, pipe=True)
+                audio_source = FFmpegPCMAudio(
+                    audio_buffer,
+                    pipe=True,
+                    before_options="-f s16le -ar 24000 -ac 1",
+                    options="-ar 48000 -ac 2"  # resample to 48 kHz stereo for Discord
+                )
 
                 # Define callback for when playback finishes
                 def log_playback_finished(error: Optional[Exception]) -> None:
