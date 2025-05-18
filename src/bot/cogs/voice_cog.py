@@ -249,7 +249,7 @@ class VoiceCog(commands.Cog):
 
                 if pcm_data:
                     # Process and send the audio data
-                    processed_audio = self.audio_manager.process_audio(pcm_data)
+                    processed_audio = await self.audio_manager.ffmpeg_to_24k_mono(pcm_data)
                     base64_audio = self.audio_manager.encode_to_base64(processed_audio)
                     await self._send_audio_events(base64_audio)
                 else:

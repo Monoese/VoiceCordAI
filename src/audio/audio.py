@@ -139,30 +139,39 @@ class AudioManager:
         """
         self.response_buffer.clear()
 
-    @staticmethod
-    def process_audio(raw_pcm_data: ByteString) -> bytes:
+    async def ffmpeg_to_24k_mono(self, raw: bytes) -> bytes:
         """
-        Convert and process raw PCM data for transmission.
+        Executes FFmpeg to resample and convert raw audio input from 48kHz stereo
+        to 24kHz mono. Utilizes an asynchronous subprocess execution to call FFmpeg
+        with specified parameters. The input audio is received as raw bytes, processed
+        through FFmpeg, and the resulting audio output is returned as raw bytes.
 
-        This method:
-        1. Creates an AudioSegment from the raw PCM data with Discord's frame rate
-        2. Resamples the audio to the target frame rate for external services
-
-        Args:
-            raw_pcm_data: The raw PCM audio data to process
+        Parameters:
+        raw: bytes
+            Raw audio data to be processed by FFmpeg.
 
         Returns:
-            bytes: Processed PCM audio data at the target frame rate
+        bytes
+            The processed audio data converted to 24kHz mono.
+
+        Raises:
+        RuntimeError
+            If FFmpeg fails or returns a non-zero exit code.
         """
-        # Create AudioSegment from raw PCM data with Discord's frame rate
-        audio_segment = AudioSegment(data=raw_pcm_data, sample_width=Config.SAMPLE_WIDTH,
-                                     frame_rate=Config.DISCORD_FRAME_RATE, channels=Config.CHANNELS)
-
-        # Resample to target frame rate for external services
-        audio_segment = audio_segment.set_frame_rate(Config.TARGET_FRAME_RATE)
-        logger.debug(f"Processed audio sample rate: {audio_segment.frame_rate}")
-
-        return audio_segment.raw_data
+        cmd = [
+            "ffmpeg", "-hide_banner", "-loglevel", "error",
+            "-f", "s16le", "-ar", "48000", "-ac", "2", "-i", "pipe:0",
+            "-f", "s16le", "-ar", "24000", "-ac", "1", "pipe:1"
+        ]
+        proc = await asyncio.create_subprocess_exec(
+            *cmd, stdin=asyncio.subprocess.PIPE,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE
+        )
+        out, err = await proc.communicate(raw)
+        if proc.returncode != 0:
+            raise RuntimeError("ffmpeg failed: " + err.decode().strip())
+        return out
 
     @staticmethod
     def encode_to_base64(pcm_data: ByteString) -> str:
