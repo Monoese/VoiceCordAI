@@ -155,8 +155,9 @@ class WebSocketManager:
             try:
                 await self._ws.send(event.to_json())
                 log.debug("Sent event: %s", event.type)
-            except ConnectionClosed as cexc:
-                log.warning("Connection closed while sending: %s", cexc)
-                raise
+            except ConnectionClosed as e:
+                log.warning("Connection closed while sending: %s", e)
+            except TypeError as e:
+                log.warning("Message doesn't have a supported type: %s", e)
             finally:
                 self._outgoing.task_done()
