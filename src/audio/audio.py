@@ -18,9 +18,7 @@ from typing import Any, Optional, ByteString
 
 from discord import FFmpegPCMAudio, User
 from discord.ext import voice_recv
-from pydub import AudioSegment
 
-from src.config.config import Config
 from src.utils.logger import get_logger
 
 # Configure logger for this module
@@ -38,6 +36,7 @@ class AudioManager:
     - Managing audio playback in Discord voice channels
     - Buffering and queuing audio for smooth playback
     """
+
     def __init__(self) -> None:
         """
         Initialize the AudioManager with empty buffers and queues.
@@ -46,8 +45,12 @@ class AudioManager:
         - response_buffer: Temporary storage for audio data received from external services
         - output_queue: Queue for audio files waiting to be played back
         """
-        self.response_buffer: bytearray = bytearray()  # Buffer for incoming audio responses
-        self.output_queue: asyncio.Queue[BytesIO] = asyncio.Queue()  # Queue for audio playback
+        self.response_buffer: bytearray = (
+            bytearray()
+        )  # Buffer for incoming audio responses
+        self.output_queue: asyncio.Queue[BytesIO] = (
+            asyncio.Queue()
+        )  # Queue for audio playback
 
     class PCM16Sink(voice_recv.AudioSink):
         """
@@ -58,6 +61,7 @@ class AudioManager:
         - Accumulates the data in a bytearray for later processing
         - Tracks the total amount of data captured for debugging
         """
+
         def __init__(self) -> None:
             """Initialize the audio sink with empty buffer and counters."""
             super().__init__()
@@ -89,7 +93,9 @@ class AudioManager:
                 # Add the PCM data to our buffer
                 self.audio_data.extend(data.pcm)
                 self.total_bytes += len(data.pcm)
-                logger.debug(f"Write called: Adding {len(data.pcm)} bytes. Total accumulated: {self.total_bytes} bytes")
+                logger.debug(
+                    f"Write called: Adding {len(data.pcm)} bytes. Total accumulated: {self.total_bytes} bytes"
+                )
             else:
                 logger.warning("Write called with no PCM data")
 
@@ -159,14 +165,31 @@ class AudioManager:
             If FFmpeg fails or returns a non-zero exit code.
         """
         cmd = [
-            "ffmpeg", "-hide_banner", "-loglevel", "error",
-            "-f", "s16le", "-ar", "48000", "-ac", "2", "-i", "pipe:0",
-            "-f", "s16le", "-ar", "24000", "-ac", "1", "pipe:1"
+            "ffmpeg",
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-f",
+            "s16le",
+            "-ar",
+            "48000",
+            "-ac",
+            "2",
+            "-i",
+            "pipe:0",
+            "-f",
+            "s16le",
+            "-ar",
+            "24000",
+            "-ac",
+            "1",
+            "pipe:1",
         ]
         proc = await asyncio.create_subprocess_exec(
-            *cmd, stdin=asyncio.subprocess.PIPE,
+            *cmd,
+            stdin=asyncio.subprocess.PIPE,
             stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE
+            stderr=asyncio.subprocess.PIPE,
         )
         out, err = await proc.communicate(raw)
         if proc.returncode != 0:
@@ -229,7 +252,7 @@ class AudioManager:
                     audio_buffer,
                     pipe=True,
                     before_options="-f s16le -ar 24000 -ac 1",
-                    options="-ar 48000 -ac 2"  # resample to 48 kHz stereo for Discord
+                    options="-ar 48000 -ac 2",  # resample to 48 kHz stereo for Discord
                 )
 
                 # Define callback for when playback finishes

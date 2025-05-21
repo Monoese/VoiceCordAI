@@ -12,7 +12,7 @@ from enum import Enum, auto
 class ConnectionState(Enum):
     """
     Enum representing the possible states of a WebSocket connection.
-    
+
     States:
     - DISCONNECTED: The connection is not established
     - CONNECTING: The connection is being established
@@ -21,6 +21,7 @@ class ConnectionState(Enum):
     - DISCONNECTING: The connection is in the process of being closed
     - ERROR: The connection encountered an error
     """
+
     DISCONNECTED = auto()
     CONNECTING = auto()
     CONNECTED = auto()

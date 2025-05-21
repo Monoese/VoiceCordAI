@@ -27,6 +27,7 @@ class BotStateEnum(Enum):
         STANDBY: Bot is ready to start recording when triggered
         RECORDING: Bot is actively recording audio from a user
     """
+
     IDLE = "idle"
     STANDBY = "standby"
     RECORDING = "recording"
@@ -43,6 +44,7 @@ class BotState:
     - Maintains the standby message for reaction-based controls
     - Provides methods to update the UI based on state changes
     """
+
     def __init__(self):
         """
         Initialize the BotState with default values.
@@ -108,19 +110,21 @@ class BotState:
         Returns:
             str: Formatted message content for the standby message
         """
-        return (f"**🎙 Voice Recording Bot - **{self._current_state.value}** Mode**\n\n"
-                f"Here's how to control the bot:\n"
-                f"---\n"
-                f"### 🔄 How to Use:\n"
-                f"1. **Start Recording**: React to this message with 🎙 to start recording.\n"
-                f"2. **Stop Recording**: Remove your 🎙 reaction to pause recording.\n"
-                f"4. **Finish Session**: Use `!-listen` to end the session and return the bot to Idle Mode.\n"
-                f"---\n"
-                f"### 🛠 Current Status:\n"
-                f"- **Recording Status**: `{self._current_state.value}`\n"
-                f"---\n"
-                f"### 🧑 Authority User:\n"
-                f"> `{self._authority_user_name}` can control the recording actions.")
+        return (
+            f"**🎙 Voice Recording Bot - **{self._current_state.value}** Mode**\n\n"
+            f"Here's how to control the bot:\n"
+            f"---\n"
+            f"### 🔄 How to Use:\n"
+            f"1. **Start Recording**: React to this message with 🎙 to start recording.\n"
+            f"2. **Stop Recording**: Remove your 🎙 reaction to pause recording.\n"
+            f"4. **Finish Session**: Use `!-listen` to end the session and return the bot to Idle Mode.\n"
+            f"---\n"
+            f"### 🛠 Current Status:\n"
+            f"- **Recording Status**: `{self._current_state.value}`\n"
+            f"---\n"
+            f"### 🧑 Authority User:\n"
+            f"> `{self._authority_user_name}` can control the recording actions."
+        )
 
     async def initialize_standby(self, ctx) -> bool:
         """

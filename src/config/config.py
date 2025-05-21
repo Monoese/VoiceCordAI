@@ -10,6 +10,7 @@ load_dotenv()
 
 class ConfigError(Exception):
     """Custom exception for configuration errors."""
+
     pass
 
 
@@ -19,7 +20,9 @@ class Config:
     # Discord and OpenAI API settings
     DISCORD_TOKEN: Optional[str] = os.getenv("DISCORD_TOKEN")
     OPENAI_API_KEY: Optional[str] = os.getenv("OPENAI_API_KEY")
-    WS_SERVER_URL: str = "wss://api.openai.com/v1/realtime?model=gpt-4o-mini-realtime-preview-2024-12-17"
+    WS_SERVER_URL: str = (
+        "wss://api.openai.com/v1/realtime?model=gpt-4o-mini-realtime-preview-2024-12-17"
+    )
 
     # Commands
     COMMAND_PREFIX: str = "/"
@@ -49,6 +52,7 @@ class Config:
             raise ConfigError("DISCORD_TOKEN environment variable not set or empty.")
         if not cls.OPENAI_API_KEY:
             raise ConfigError("OPENAI_API_KEY environment variable not set or empty.")
+
 
 # Validate configuration on import
 Config.validate()

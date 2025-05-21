@@ -19,14 +19,14 @@ logs_dir.mkdir(exist_ok=True)
 def get_logger(name: str) -> logging.Logger:
     """
     Get a logger for the specified module.
-    
+
     This function just returns a logger for the given name without configuring
     any handlers. The root logger is configured once at import time,
     and all other loggers inherit from it.
-    
+
     Args:
         name: Usually __name__ of the calling module
-        
+
     Returns:
         A configured logger instance
     """
@@ -50,11 +50,17 @@ def _configure_root_logger() -> None:
 
     # Create a rotating file handler for all logs
     log_file = logs_dir / "discord_bot.log"
-    file_handler = RotatingFileHandler(log_file, encoding="utf-8", maxBytes=Config.LOG_MAX_SIZE,
-        backupCount=Config.LOG_BACKUP_COUNT)
+    file_handler = RotatingFileHandler(
+        log_file,
+        encoding="utf-8",
+        maxBytes=Config.LOG_MAX_SIZE,
+        backupCount=Config.LOG_BACKUP_COUNT,
+    )
 
     # Use a formatter compatible with discord.py's style for consistency
-    formatter = logging.Formatter('[{asctime}] [{levelname:<8}] {name}: {message}', '%Y-%m-%d %H:%M:%S', style='{')
+    formatter = logging.Formatter(
+        "[{asctime}] [{levelname:<8}] {name}: {message}", "%Y-%m-%d %H:%M:%S", style="{"
+    )
 
     file_handler.setFormatter(formatter)
     file_handler.setLevel(Config.LOG_LEVEL)

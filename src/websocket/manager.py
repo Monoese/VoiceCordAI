@@ -45,9 +45,13 @@ class WebSocketManager:
     The manager provides a simple interface for other components to send events
     without having to worry about connection state or reconnection logic.
     """
+
     def __init__(self, event_handler_instance) -> None:
         self._url: str = Config.WS_SERVER_URL
-        self._headers = {"Authorization": f"Bearer {Config.OPENAI_API_KEY}", "OpenAI-Beta": "realtime=v1", }
+        self._headers = {
+            "Authorization": f"Bearer {Config.OPENAI_API_KEY}",
+            "OpenAI-Beta": "realtime=v1",
+        }
         self._event_handler = event_handler_instance
 
         self._outgoing_event_queue: asyncio.Queue[BaseEvent] = asyncio.Queue()
@@ -78,7 +82,9 @@ class WebSocketManager:
         async with self._state_lock:
             old_state = self._state
             if old_state != new_state:
-                log.info(f"WebSocket state transition: {old_state.name} → {new_state.name}")
+                log.info(
+                    f"WebSocket state transition: {old_state.name} → {new_state.name}"
+                )
                 self._state = new_state
 
                 # Reset reconnect attempts when successfully connected
@@ -118,8 +124,14 @@ class WebSocketManager:
             if task and not task.done():
                 task.cancel()
 
-        await asyncio.gather(*(t for t in (self._receive_task, self._send_task, self._connection_task) if t),
-            return_exceptions=True, )
+        await asyncio.gather(
+            *(
+                t
+                for t in (self._receive_task, self._send_task, self._connection_task)
+                if t
+            ),
+            return_exceptions=True,
+        )
 
         self._websocket_connection = None
         self._receive_task = None
@@ -162,7 +174,9 @@ class WebSocketManager:
         if result:
             log.info("WebSocket connection established successfully")
         else:
-            log.warning(f"Failed to establish WebSocket connection within {timeout}s timeout")
+            log.warning(
+                f"Failed to establish WebSocket connection within {timeout}s timeout"
+            )
 
         return result
 
@@ -267,25 +281,31 @@ class WebSocketManager:
             "outgoing_queue_size": self._outgoing_event_queue.qsize(),
             "outgoing_queue_empty": self._outgoing_event_queue.empty(),
             "has_active_connection": self._websocket_connection is not None,
-            "has_receive_task": self._receive_task is not None and not self._receive_task.done(),
+            "has_receive_task": self._receive_task is not None
+            and not self._receive_task.done(),
             "has_send_task": self._send_task is not None and not self._send_task.done(),
-            "has_connection_task": self._connection_task is not None and not self._connection_task.done(),
+            "has_connection_task": self._connection_task is not None
+            and not self._connection_task.done(),
         }
 
         # Add WebSocket-specific metrics if connected
         if self._websocket_connection is not None:
             try:
-                metrics.update({
-                    "ws_open": not self._websocket_connection.closed,
-                    "ws_closing": self._websocket_connection.closing,
-                })
+                metrics.update(
+                    {
+                        "ws_open": not self._websocket_connection.closed,
+                        "ws_closing": self._websocket_connection.closing,
+                    }
+                )
             except Exception:
                 # Ignore errors when trying to access WebSocket properties
                 pass
 
         return metrics
 
-    async def wait_for_state(self, target_state: ConnectionState, timeout: float = None) -> bool:
+    async def wait_for_state(
+        self, target_state: ConnectionState, timeout: float = None
+    ) -> bool:
         """
         Wait for the connection to reach a specific state.
 
@@ -306,7 +326,9 @@ class WebSocketManager:
         future = asyncio.Future()
 
         # Define a callback to check state changes
-        async def state_change_callback(old_state: ConnectionState, new_state: ConnectionState):
+        async def state_change_callback(
+            old_state: ConnectionState, new_state: ConnectionState
+        ):
             if new_state == target_state and not future.done():
                 future.set_result(True)
 
@@ -362,7 +384,9 @@ class WebSocketManager:
             except Exception as exc:
                 # Set state to ERROR on connection failure
                 await self._set_state(ConnectionState.ERROR)
-                log.error(f"WebSocket error: {exc} – reconnecting in {backoff}s (attempt {self._reconnect_attempts})")
+                log.error(
+                    f"WebSocket error: {exc} – reconnecting in {backoff}s (attempt {self._reconnect_attempts})"
+                )
 
                 # Wait before reconnecting with exponential backoff
                 await asyncio.sleep(backoff)
@@ -381,7 +405,9 @@ class WebSocketManager:
         """
         try:
             # Maintain CONNECTING state from _connect_forever or start()
-            async with websockets.connect(self._url, additional_headers=self._headers) as ws:
+            async with websockets.connect(
+                self._url, additional_headers=self._headers
+            ) as ws:
                 self._websocket_connection = ws
 
                 # Transition to CONNECTED state
@@ -415,7 +441,10 @@ class WebSocketManager:
 
             # If we're not already in DISCONNECTING or ERROR state (handled by other methods),
             # transition to DISCONNECTED if the connection was closed normally
-            if self._state not in (ConnectionState.DISCONNECTING, ConnectionState.ERROR):
+            if self._state not in (
+                ConnectionState.DISCONNECTING,
+                ConnectionState.ERROR,
+            ):
                 await self._set_state(ConnectionState.DISCONNECTED)
 
     async def _receive_loop(self) -> None:
@@ -435,7 +464,9 @@ class WebSocketManager:
                     if event:
                         await self._event_handler.dispatch_event(event)
                     else:
-                        log.debug(f"Dropping unknown event type: {event_dict.get('type')}")
+                        log.debug(
+                            f"Dropping unknown event type: {event_dict.get('type')}"
+                        )
                 except json.JSONDecodeError as e:
                     log.error(f"Failed to decode JSON message: {e}")
                 except Exception as exc:

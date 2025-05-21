@@ -39,6 +39,7 @@ def register_event(event_type: str):
     Returns:
         A decorator function that registers the class and returns it unchanged
     """
+
     def wrapper(cls):
         EVENT_TYPE_MAPPING[event_type] = cls
         return cls
@@ -58,8 +59,9 @@ class BaseEvent:
     It also provides methods for serialization and deserialization of events
     to and from JSON format for WebSocket transmission.
     """
+
     event_id: str  # Unique identifier for the event
-    type: str      # Type of the event, used for routing
+    type: str  # Type of the event, used for routing
 
     def to_json(self) -> str:
         """

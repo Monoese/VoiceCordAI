@@ -17,8 +17,14 @@ import base64
 from typing import Callable, Awaitable, Dict
 
 from src.audio.audio import AudioManager
-from src.websocket.events.events import BaseEvent, ErrorEvent, SessionUpdatedEvent, SessionCreatedEvent, \
-    ResponseAudioDeltaEvent, ResponseAudioDoneEvent
+from src.websocket.events.events import (
+    BaseEvent,
+    ErrorEvent,
+    SessionUpdatedEvent,
+    SessionCreatedEvent,
+    ResponseAudioDeltaEvent,
+    ResponseAudioDoneEvent,
+)
 from src.utils.logger import get_logger
 
 # Configure logger for this module
@@ -40,6 +46,7 @@ class WebSocketEventHandler:
     allowing for a clean separation of concerns and easy extension with
     new event types.
     """
+
     def __init__(self, audio_manager: AudioManager):
         """
         Initialize the WebSocketEventHandler with an AudioManager.
@@ -71,7 +78,9 @@ class WebSocketEventHandler:
     async def _handle_session_created(self, event: SessionCreatedEvent) -> None:
         logger.info(f"Handling event: {event.type}")
 
-    async def _handle_response_audio_delta(self, event: ResponseAudioDeltaEvent) -> None:
+    async def _handle_response_audio_delta(
+        self, event: ResponseAudioDeltaEvent
+    ) -> None:
         logger.info(f"Handling event: {event.type}")
         base64_audio = event.delta
         decoded_audio = base64.b64decode(base64_audio)

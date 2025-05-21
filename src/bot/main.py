@@ -35,8 +35,12 @@ audio_manager: AudioManager = AudioManager()
 bot_state_manager: BotState = BotState()
 
 # Set up WebSocket communication
-event_handler: WebSocketEventHandler = WebSocketEventHandler(audio_manager=audio_manager)
-websocket_manager: WebSocketManager = WebSocketManager(event_handler_instance=event_handler)
+event_handler: WebSocketEventHandler = WebSocketEventHandler(
+    audio_manager=audio_manager
+)
+websocket_manager: WebSocketManager = WebSocketManager(
+    event_handler_instance=event_handler
+)
 
 # Configure Discord bot with all intents for full functionality
 intents: discord.Intents = discord.Intents.all()
@@ -55,7 +59,9 @@ async def main():
     """
     async with bot:
         # Add the voice cog which handles all voice-related commands and events
-        await bot.add_cog(VoiceCog(bot, audio_manager, bot_state_manager, websocket_manager))
+        await bot.add_cog(
+            VoiceCog(bot, audio_manager, bot_state_manager, websocket_manager)
+        )
         logger.info("VoiceCog loaded.")
 
         # Start the bot with the token from configuration
