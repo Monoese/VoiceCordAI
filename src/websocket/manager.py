@@ -1,30 +1,25 @@
 """
-WebSocket Manager module for handling WebSocket connections to external services.
+WebSocket Manager module for handling WebSocket events and coordinating with the connection layer.
 
 This module provides the WebSocketManager class which:
-- Establishes and maintains WebSocket connections
-- Handles reconnection with exponential backoff on connection failures
+- Coordinates with WebSocketConnection for low-level connection management
 - Sends events to the WebSocket server
 - Receives and processes events from the WebSocket server
-- Manages background tasks for sending and receiving data
-- Implements a state machine to track connection status
+- Serializes events to JSON for transmission
+- Deserializes JSON messages to event objects
 
-The manager uses asyncio for asynchronous operation and provides a clean
-interface for other components to send events without worrying about
-the underlying connection details.
+The manager provides a clean interface for other components to send events
+without worrying about the underlying connection details, while delegating
+the actual connection management to the WebSocketConnection class.
 """
 
-import asyncio
 import json
-from typing import Optional
-
-import websockets
-from websockets.exceptions import ConnectionClosed
 
 from src.config.config import Config
+from src.utils.logger import get_logger
+from src.websocket.connection import WebSocketConnection
 from src.websocket.connection_state import ConnectionState
 from src.websocket.events.events import BaseEvent
-from src.utils.logger import get_logger
 
 # Configure logger for this module
 log = get_logger(__name__)
@@ -32,113 +27,81 @@ log = get_logger(__name__)
 
 class WebSocketManager:
     """
-    Manages WebSocket connections to external services.
+    Manages WebSocket events and coordinates with the connection layer.
 
     This class handles:
-    - Establishing and maintaining WebSocket connections
-    - Reconnecting automatically with exponential backoff on failures
-    - Sending events to the WebSocket server via a queue system
-    - Receiving events from the WebSocket server and dispatching them
-    - Managing background tasks for connection, sending, and receiving
-    - Tracking connection state using a state machine
+    - Coordinating with WebSocketConnection for low-level connection management
+    - Sending events to the WebSocket server
+    - Receiving and processing events from the WebSocket server
+    - Serializing events to JSON for transmission
+    - Deserializing JSON messages to event objects
 
     The manager provides a simple interface for other components to send events
     without having to worry about connection state or reconnection logic.
     """
 
     def __init__(self, event_handler_instance) -> None:
-        self._url: str = Config.WS_SERVER_URL
-        self._headers = {
+        """
+        Initialize the WebSocketManager with an event handler.
+
+        Args:
+            event_handler_instance: The event handler to use for processing events
+        """
+        self._event_handler = event_handler_instance
+
+        # Configure WebSocket connection parameters
+        url: str = Config.WS_SERVER_URL
+        headers = {
             "Authorization": f"Bearer {Config.OPENAI_API_KEY}",
             "OpenAI-Beta": "realtime=v1",
         }
-        self._event_handler = event_handler_instance
 
-        self._outgoing_event_queue: asyncio.Queue[BaseEvent] = asyncio.Queue()
+        # Create the WebSocketConnection instance
+        self._connection = WebSocketConnection(
+            url=url,
+            headers=headers,
+            message_handler=self._handle_message
+        )
 
-        self._websocket_connection: Optional[websockets.ClientConnection] = None
-        self._receive_task: Optional[asyncio.Task] = None
-        self._send_task: Optional[asyncio.Task] = None
-        self._connection_task: Optional[asyncio.Task] = None
-
-        self._connection_active = asyncio.Event()
-        self._connection_active.clear()
-
-        # Initialize state machine
-        self._state = ConnectionState.DISCONNECTED
-        self._state_lock = asyncio.Lock()  # For thread-safe state transitions
-        self._reconnect_attempts = 0
-
-    async def _set_state(self, new_state: ConnectionState) -> None:
+    async def _handle_message(self, message: str) -> None:
         """
-        Set the connection state with proper logging and synchronization.
+        Handle a message received from the WebSocket connection.
 
-        This method ensures thread-safe state transitions and logs the state change
-        for debugging purposes.
+        This method:
+        1. Parses the JSON message into an event object
+        2. Dispatches the event to the event handler
+        3. Logs any errors that occur during processing
 
         Args:
-            new_state: The new connection state to transition to
+            message: The raw message received from the WebSocket
         """
-        async with self._state_lock:
-            old_state = self._state
-            if old_state != new_state:
-                log.info(
-                    f"WebSocket state transition: {old_state.name} → {new_state.name}"
-                )
-                self._state = new_state
-
-                # Reset reconnect attempts when successfully connected
-                if new_state == ConnectionState.CONNECTED:
-                    self._reconnect_attempts = 0
-                # Increment reconnect attempts when reconnecting
-                elif new_state == ConnectionState.RECONNECTING:
-                    self._reconnect_attempts += 1
+        try:
+            event_dict = json.loads(message)
+            event = BaseEvent.from_json(event_dict)
+            if event:
+                await self._event_handler.dispatch_event(event)
+            else:
+                log.debug(f"Dropping unknown event type: {event_dict.get('type')}")
+        except json.JSONDecodeError as e:
+            log.error(f"Failed to decode JSON message: {e}")
+        except Exception as exc:
+            log.exception(f"Failed to process message: {exc}")
 
     async def start(self) -> None:
         """
-        Start the background-reconnecting task (idempotent).
+        Start the WebSocket connection (idempotent).
 
-        Transitions the state to CONNECTING and starts the connection process.
+        Delegates to the WebSocketConnection instance to start the connection.
         """
-        if self._connection_task and not self._connection_task.done():
-            return
-
-        await self._set_state(ConnectionState.CONNECTING)
-        self._connection_active.set()
-        self._connection_task = asyncio.create_task(self._maintain_connection())
+        await self._connection.start()
 
     async def stop(self) -> None:
         """
-        Signal all loops to finish and wait for a clean shutdown.
+        Signal the WebSocket connection to stop and wait for a clean shutdown.
 
-        Transitions the state to DISCONNECTING and then to DISCONNECTED
-        after all resources are cleaned up.
+        Delegates to the WebSocketConnection instance to stop the connection.
         """
-        await self._set_state(ConnectionState.DISCONNECTING)
-        self._connection_active.clear()
-
-        if self._websocket_connection:
-            await self._websocket_connection.close()
-
-        for task in (self._receive_task, self._send_task, self._connection_task):
-            if task and not task.done():
-                task.cancel()
-
-        await asyncio.gather(
-            *(
-                t
-                for t in (self._receive_task, self._send_task, self._connection_task)
-                if t
-            ),
-            return_exceptions=True,
-        )
-
-        self._websocket_connection = None
-        self._receive_task = None
-        self._send_task = None
-        self._connection_task = None
-
-        await self._set_state(ConnectionState.DISCONNECTED)
+        await self._connection.stop()
 
     async def close(self) -> None:
         """Alias for stop() method."""
@@ -159,17 +122,17 @@ class WebSocketManager:
         Returns:
             bool: True if connected successfully, False otherwise
         """
-        # Start the connection if it's not already started
-        if not self._connection_task or self._connection_task.done():
+        # Start the connection if it's not already connected
+        if not self._connection.connected:
             await self.start()
 
         # If we're already connected, return immediately
-        if self._state == ConnectionState.CONNECTED:
+        if self._connection.connected:
             return True
 
         # Wait for the connection to be established
         log.info("Waiting for WebSocket connection to be established...")
-        result = await self.wait_for_state(ConnectionState.CONNECTED, timeout)
+        result = await self._connection.wait_for_state(ConnectionState.CONNECTED, timeout)
 
         if result:
             log.info("WebSocket connection established successfully")
@@ -182,15 +145,23 @@ class WebSocketManager:
 
     async def send_event(self, event: BaseEvent) -> None:
         """
-        Queue an event to be sent to the server.
+        Send an event to the server.
 
+        This method serializes the event to JSON and sends it over the WebSocket connection.
         Note: This method does not check if the connection is established.
         Use safe_send_event() if you need to ensure the connection is established.
 
         Args:
             event: The event to send to the WebSocket server
         """
-        await self._outgoing_event_queue.put(event)
+        try:
+            json_data = event.to_json()
+            await self._connection.send(json_data)
+            log.debug(f"Sent event: {event.type}")
+        except Exception as e:
+            log.error(f"Error sending event {event.type}: {e}")
+            # Re-raise to allow caller to handle the error
+            raise
 
     async def safe_send_event(self, event: BaseEvent, timeout: float = 30.0) -> bool:
         """
@@ -199,14 +170,14 @@ class WebSocketManager:
         This convenience method:
         1. Ensures the WebSocket connection is established
         2. Sends the event if connected
-        3. Returns True if the event was queued successfully, False otherwise
+        3. Returns True if the event was sent successfully, False otherwise
 
         Args:
             event: The event to send to the WebSocket server
             timeout: Maximum time to wait for connection in seconds
 
         Returns:
-            bool: True if the event was queued successfully, False otherwise
+            bool: True if the event was sent successfully, False otherwise
         """
         # Ensure the connection is established
         if not await self.ensure_connected(timeout):
@@ -216,10 +187,10 @@ class WebSocketManager:
         # Send the event
         try:
             await self.send_event(event)
-            log.debug(f"Successfully queued event {event.type} for sending")
+            log.debug(f"Successfully sent event {event.type}")
             return True
         except Exception as e:
-            log.error(f"Error queuing event {event.type}: {e}")
+            log.error(f"Error sending event {event.type}: {e}")
             return False
 
     @property
@@ -230,17 +201,7 @@ class WebSocketManager:
         Returns:
             bool: True if the connection is in CONNECTED state, False otherwise
         """
-        return self._state == ConnectionState.CONNECTED
-
-    @property
-    def connection(self):
-        """
-        Get the current WebSocket connection object.
-
-        Returns:
-            The WebSocket connection object or None if not connected
-        """
-        return self._websocket_connection
+        return self._connection.connected
 
     @property
     def state(self) -> ConnectionState:
@@ -250,7 +211,7 @@ class WebSocketManager:
         Returns:
             ConnectionState: The current state of the WebSocket connection
         """
-        return self._state
+        return self._connection.state
 
     @property
     def reconnect_attempts(self) -> int:
@@ -262,7 +223,7 @@ class WebSocketManager:
         Returns:
             int: The number of reconnection attempts
         """
-        return self._reconnect_attempts
+        return self._connection.reconnect_attempts
 
     async def get_health_metrics(self) -> dict:
         """
@@ -274,37 +235,21 @@ class WebSocketManager:
         Returns:
             dict: A dictionary containing health metrics
         """
-        metrics = {
-            "state": self._state.name,
-            "connected": self.connected,
-            "reconnect_attempts": self._reconnect_attempts,
-            "outgoing_queue_size": self._outgoing_event_queue.qsize(),
-            "outgoing_queue_empty": self._outgoing_event_queue.empty(),
-            "has_active_connection": self._websocket_connection is not None,
-            "has_receive_task": self._receive_task is not None
-            and not self._receive_task.done(),
-            "has_send_task": self._send_task is not None and not self._send_task.done(),
-            "has_connection_task": self._connection_task is not None
-            and not self._connection_task.done(),
+        # Get connection metrics from the WebSocketConnection instance
+        connection_metrics = await self._connection.get_health_metrics()
+
+        # Add manager-specific metrics
+        manager_metrics = {
+            "manager_type": "WebSocketManager",
         }
 
-        # Add WebSocket-specific metrics if connected
-        if self._websocket_connection is not None:
-            try:
-                metrics.update(
-                    {
-                        "ws_open": not self._websocket_connection.closed,
-                        "ws_closing": self._websocket_connection.closing,
-                    }
-                )
-            except Exception:
-                # Ignore errors when trying to access WebSocket properties
-                pass
+        # Combine metrics
+        metrics = {**connection_metrics, **manager_metrics}
 
         return metrics
 
     async def wait_for_state(
-        self, target_state: ConnectionState, timeout: float = None
+            self, target_state: ConnectionState, timeout: float = None
     ) -> bool:
         """
         Wait for the connection to reach a specific state.
@@ -319,197 +264,4 @@ class WebSocketManager:
         Returns:
             bool: True if the target state was reached, False if timed out
         """
-        if self._state == target_state:
-            return True
-
-        # Create a future that will be set when the state changes to the target state
-        future = asyncio.Future()
-
-        # Define a callback to check state changes
-        async def state_change_callback(
-            old_state: ConnectionState, new_state: ConnectionState
-        ):
-            if new_state == target_state and not future.done():
-                future.set_result(True)
-
-        # Store the original _set_state method
-        original_set_state = self._set_state
-
-        # Override _set_state to check for the target state
-        async def wrapped_set_state(new_state: ConnectionState):
-            old_state = self._state
-            await original_set_state(new_state)
-            await state_change_callback(old_state, new_state)
-
-        # Replace the method temporarily
-        self._set_state = wrapped_set_state
-
-        try:
-            # Wait for the future to be set or timeout
-            return await asyncio.wait_for(future, timeout)
-        except asyncio.TimeoutError:
-            log.warning(f"Timeout waiting for state {target_state.name}")
-            return False
-        finally:
-            # Restore the original method
-            self._set_state = original_set_state
-
-    async def _maintain_connection(self) -> None:
-        """
-        Maintain a WebSocket connection with exponential back‑off until ``stop`` is called.
-
-        This method manages the connection lifecycle and state transitions:
-        - CONNECTING: Initial connection attempt
-        - CONNECTED: Successfully connected
-        - RECONNECTING: Connection lost, attempting to reconnect
-        - ERROR: Connection error occurred
-
-        The method implements exponential backoff for reconnection attempts.
-        """
-        backoff = 1
-        while self._connection_active.is_set():
-            try:
-                # If we're reconnecting after a failure, update the state
-                if self._state == ConnectionState.ERROR:
-                    await self._set_state(ConnectionState.RECONNECTING)
-
-                # Establish a single connection (this will set state to CONNECTED if successful)
-                await self._establish_single_connection()
-
-                # Reset backoff on successful connection
-                backoff = 1
-            except asyncio.CancelledError:
-                # Don't change state on cancellation as it's handled by stop()
-                raise
-            except Exception as exc:
-                # Set state to ERROR on connection failure
-                await self._set_state(ConnectionState.ERROR)
-                log.error(
-                    f"WebSocket error: {exc} – reconnecting in {backoff}s (attempt {self._reconnect_attempts})"
-                )
-
-                # Wait before reconnecting with exponential backoff
-                await asyncio.sleep(backoff)
-                backoff = min(backoff * 2, 60)
-
-    async def _establish_single_connection(self) -> None:
-        """
-        Establish a single WebSocket connection; returns when it closes.
-
-        This method:
-        1. Establishes a WebSocket connection
-        2. Transitions to CONNECTED state when successful
-        3. Sets up receive and send tasks
-        4. Waits for tasks to complete or fail
-        5. Transitions back to appropriate state when connection closes
-        """
-        try:
-            # Maintain CONNECTING state from _connect_forever or start()
-            async with websockets.connect(
-                self._url, additional_headers=self._headers
-            ) as ws:
-                self._websocket_connection = ws
-
-                # Transition to CONNECTED state
-                await self._set_state(ConnectionState.CONNECTED)
-                log.info(f"Connected to WebSocket server → {self._url}")
-
-                # Start receive and send tasks
-                self._receive_task = asyncio.create_task(self._receive_loop())
-                self._send_task = asyncio.create_task(self._send_loop())
-
-                # Wait for either task to complete or fail
-                done, pending = await asyncio.wait(
-                    (self._receive_task, self._send_task),
-                    return_when=asyncio.FIRST_EXCEPTION,
-                )
-
-                # Cancel pending tasks
-                for task in pending:
-                    task.cancel()
-
-                # Check for exceptions in completed tasks
-                for task in done:
-                    try:
-                        task.result()
-                    except Exception as e:
-                        log.error(f"Task failed with error: {e}")
-                        # We'll transition to ERROR state in _connect_forever
-        finally:
-            # Clear the WebSocket reference
-            self._websocket_connection = None
-
-            # If we're not already in DISCONNECTING or ERROR state (handled by other methods),
-            # transition to DISCONNECTED if the connection was closed normally
-            if self._state not in (
-                ConnectionState.DISCONNECTING,
-                ConnectionState.ERROR,
-            ):
-                await self._set_state(ConnectionState.DISCONNECTED)
-
-    async def _receive_loop(self) -> None:
-        """
-        Background task: convert raw JSON → ``BaseEvent`` → queue.
-
-        This method processes incoming WebSocket messages and dispatches events
-        to the event handler. It handles errors gracefully to prevent the connection
-        from being terminated unnecessarily.
-        """
-        assert self._websocket_connection is not None
-        try:
-            async for message in self._websocket_connection:
-                try:
-                    event_dict = json.loads(message)
-                    event = BaseEvent.from_json(event_dict)
-                    if event:
-                        await self._event_handler.dispatch_event(event)
-                    else:
-                        log.debug(
-                            f"Dropping unknown event type: {event_dict.get('type')}"
-                        )
-                except json.JSONDecodeError as e:
-                    log.error(f"Failed to decode JSON message: {e}")
-                except Exception as exc:
-                    log.exception(f"Failed to process message: {exc}")
-        except ConnectionClosed as e:
-            # Normal closure or connection error
-            if e.code == 1000:  # Normal closure
-                log.info(f"WebSocket connection closed normally: {e}")
-            else:
-                log.warning(f"WebSocket connection closed with code {e.code}: {e}")
-                # The state transition will be handled by _connect_once and _connect_forever
-        except Exception as e:
-            log.error(f"Unexpected error in receive loop: {e}")
-            # The state transition will be handled by _connect_once and _connect_forever
-
-    async def _send_loop(self) -> None:
-        """
-        Background task: pop events from queue and transmit.
-
-        This method sends events from the outgoing queue to the WebSocket server.
-        It handles connection errors gracefully and ensures the queue is properly
-        managed even when errors occur.
-        """
-        assert self._websocket_connection is not None
-        try:
-            while True:
-                event: BaseEvent = await self._outgoing_event_queue.get()
-                try:
-                    await self._websocket_connection.send(event.to_json())
-                    log.debug(f"Sent event: {event.type}")
-                except ConnectionClosed as e:
-                    log.warning(f"Connection closed while sending: {e}")
-                    # Put the event back in the queue if it's important
-                    # This could be enhanced with priority or persistence
-                    await self._outgoing_event_queue.put(event)
-                    # Break the loop to allow reconnection
-                    break
-                except TypeError as e:
-                    log.warning(f"Message doesn't have a supported type: {e}")
-                except Exception as e:
-                    log.error(f"Error sending event {event.type}: {e}")
-                finally:
-                    self._outgoing_event_queue.task_done()
-        except Exception as e:
-            log.error(f"Unexpected error in send loop: {e}")
-            # The state transition will be handled by _connect_once and _connect_forever
+        return await self._connection.wait_for_state(target_state, timeout)
