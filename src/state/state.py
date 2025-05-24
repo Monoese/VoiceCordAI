@@ -16,6 +16,7 @@ from typing import Optional
 
 import discord
 from discord import Message
+from src.config.config import Config
 
 
 class BotStateEnum(Enum):
@@ -111,16 +112,15 @@ class BotState:
             str: Formatted message content for the standby message
         """
         return (
-            f"**🎙 Voice Recording Bot - **{self._current_state.value}** Mode**\n\n"
-            f"Here's how to control the bot:\n"
+            f"**🎙 Voice Chat Session - **\n\n"
             f"---\n"
-            f"### 🔄 How to Use:\n"
+            f"### 🔄 How to control the bot:\n"
             f"1. **Start Recording**: React to this message with 🎙 to start recording.\n"
-            f"2. **Stop Recording**: Remove your 🎙 reaction to pause recording.\n"
-            f"4. **Finish Session**: Use `!-listen` to end the session and return the bot to Idle Mode.\n"
+            f"2. **Finish Recording**: Remove your 🎙 reaction to finish recording.\n"
+            f"4. **End Session**: Use `{Config.COMMAND_PREFIX}-listen` to end session.\n"
             f"---\n"
-            f"### 🛠 Current Status:\n"
-            f"- **Recording Status**: `{self._current_state.value}`\n"
+            f"### 🛠 Current State:\n"
+            f"- **State**: `{self._current_state.value}`\n"
             f"---\n"
             f"### 🧑 Authority User:\n"
             f"> `{self._authority_user_name}` can control the recording actions."

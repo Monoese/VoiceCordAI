@@ -12,15 +12,13 @@ The cog uses reaction-based controls to start and stop recording, making it user
 in Discord servers.
 """
 
-import asyncio
 import uuid
-from typing import Optional
 
 import discord
 from discord.ext import commands
-from discord.ext import voice_recv
 
 from src.audio.audio import AudioManager
+from src.bot.voice_connection import VoiceConnectionManager
 from src.state.state import BotState, BotStateEnum
 from src.utils.logger import get_logger
 from src.websocket.events.events import EVENT_TYPE_MAPPING, SessionUpdateEvent
@@ -44,13 +42,8 @@ class VoiceCog(commands.Cog):
     The cog uses reaction-based controls (🎙️, ❌) for user interaction.
     """
 
-    def __init__(
-            self,
-            bot: commands.Bot,
-            audio_manager: AudioManager,
-            bot_state_manager: BotState,
-            websocket_manager: WebSocketManager,
-    ):
+    def __init__(self, bot: commands.Bot, audio_manager: AudioManager, bot_state_manager: BotState,
+            websocket_manager: WebSocketManager, ):
         """
         Initialize the VoiceCog with required dependencies.
 
@@ -64,10 +57,9 @@ class VoiceCog(commands.Cog):
         self.audio_manager = audio_manager
         self.bot_state_manager = bot_state_manager
         self.websocket_manager = websocket_manager
-        self.voice_client: Optional[voice_recv.VoiceRecvClient] = (
-            None  # Current voice connection
-        )
-        self._playback_task: Optional[asyncio.Task] = None  # Task for audio playback
+
+        # Create voice connection manager
+        self.voice_connection = VoiceConnectionManager(bot=bot, audio_manager=audio_manager, )
 
     async def _queue_session_update(self) -> None:
         """
@@ -76,11 +68,8 @@ class VoiceCog(commands.Cog):
         This method creates and sends a session.update event with turn_detection set to None,
         which configures the session for proper audio handling.
         """
-        event = SessionUpdateEvent(
-            event_id=f"event_{uuid.uuid4()}",
-            type="session.update",
-            session={"turn_detection": None},
-        )
+        event = SessionUpdateEvent(event_id=f"event_{uuid.uuid4()}", type="session.update",
+            session={"turn_detection": None}, )
         success = await self.websocket_manager.safe_send_event(event)
         if not success:
             logger.error("Failed to send session update event")
@@ -98,38 +87,23 @@ class VoiceCog(commands.Cog):
             base64_audio: Base64-encoded audio data to send to the server
         """
         # Send event to append audio to the input buffer
-        append_event_data = {
-            "event_id": f"event_{uuid.uuid4()}",
-            "type": "input_audio_buffer.append",
-            "audio": base64_audio,
-        }
-        append_event = EVENT_TYPE_MAPPING["input_audio_buffer.append"](
-            **append_event_data
-        )
+        append_event_data = {"event_id": f"event_{uuid.uuid4()}", "type": "input_audio_buffer.append",
+            "audio": base64_audio, }
+        append_event = EVENT_TYPE_MAPPING["input_audio_buffer.append"](**append_event_data)
         if not await self.websocket_manager.safe_send_event(append_event):
             logger.error("Failed to send audio append event")
             return
 
         # Send event to commit the audio buffer for processing
-        commit_event_data = {
-            "event_id": f"event_{uuid.uuid4()}",
-            "type": "input_audio_buffer.commit",
-        }
-        commit_event = EVENT_TYPE_MAPPING["input_audio_buffer.commit"](
-            **commit_event_data
-        )
+        commit_event_data = {"event_id": f"event_{uuid.uuid4()}", "type": "input_audio_buffer.commit", }
+        commit_event = EVENT_TYPE_MAPPING["input_audio_buffer.commit"](**commit_event_data)
         if not await self.websocket_manager.safe_send_event(commit_event):
             logger.error("Failed to send audio commit event")
             return
 
         # Send event to request a response based on the committed audio
-        response_create_data = {
-            "event_id": f"event_{uuid.uuid4()}",
-            "type": "response.create",
-        }
-        response_create_event = EVENT_TYPE_MAPPING["response.create"](
-            **response_create_data
-        )
+        response_create_data = {"event_id": f"event_{uuid.uuid4()}", "type": "response.create", }
+        response_create_event = EVENT_TYPE_MAPPING["response.create"](**response_create_data)
         if not await self.websocket_manager.safe_send_event(response_create_event):
             logger.error("Failed to send response create event")
             return
@@ -165,9 +139,7 @@ class VoiceCog(commands.Cog):
         await ctx.send("Bot is already in idle state.")
 
     @commands.Cog.listener()
-    async def on_reaction_add(
-            self, reaction: discord.Reaction, user: discord.User
-    ) -> None:
+    async def on_reaction_add(self, reaction: discord.Reaction, user: discord.User) -> None:
         """
         Event listener for when a reaction is added to a message.
 
@@ -188,85 +160,66 @@ class VoiceCog(commands.Cog):
 
         # Only process reactions on the standby message
         if (
-                self.bot_state_manager.standby_message
-                and reaction.message.id == self.bot_state_manager.standby_message.id
-        ):
+                self.bot_state_manager.standby_message and reaction.message.id == self.bot_state_manager.standby_message.id):
             # Handle 🎙 reaction to start recording
-            if (
-                    reaction.emoji == "🎙"
-                    and self.bot_state_manager.current_state == BotStateEnum.STANDBY
-            ):
+            if (reaction.emoji == "🎙" and self.bot_state_manager.current_state == BotStateEnum.STANDBY):
                 if await self.bot_state_manager.start_recording(user):
                     # Case 1: Bot is already in a voice channel in this guild
                     if reaction.message.guild and reaction.message.guild.voice_client:
-                        self.voice_client = reaction.message.guild.voice_client
-                        if isinstance(self.voice_client, voice_recv.VoiceRecvClient):
-                            sink = self.audio_manager.create_sink()
-                            self.voice_client.listen(sink)
-                            logger.info(
-                                "Started new recording session with fresh sink using existing voice client."
-                            )
-                        else:
-                            logger.warning(
-                                "Voice client is not a VoiceRecvClient instance."
-                            )
+                        # Use existing voice client through the voice connection manager
+                        self.voice_connection.voice_client = reaction.message.guild.voice_client
+                        if not self.voice_connection.start_recording():
+                            logger.warning("Failed to start recording with existing voice client.")
+                            await self.bot_state_manager.stop_recording()
+                            return
                     # Case 2: User is in a voice channel, bot needs to connect
                     elif user.voice and user.voice.channel:
                         try:
                             logger.info(
-                                f"User {user.name} is in voice channel {user.voice.channel.name}. Bot connecting."
-                            )
-                            self.voice_client = await user.voice.channel.connect(
-                                cls=voice_recv.VoiceRecvClient
-                            )
-                            if isinstance(
-                                    self.voice_client, voice_recv.VoiceRecvClient
-                            ):
-                                sink = self.audio_manager.create_sink()
-                                self.voice_client.listen(sink)
-                                logger.info(
-                                    "Connected to voice and started new recording session."
-                                )
-                            else:
-                                logger.error("Failed to connect as VoiceRecvClient.")
+                                f"User {user.name} is in voice channel {user.voice.channel.name}. Bot connecting.")
+                            # Connect to the user's voice channel and start recording
+                            if not await self.voice_connection.connect_to_channel(user.voice.channel):
+                                logger.error("Failed to connect to voice channel.")
+                                await self.bot_state_manager.stop_recording()
+                                await reaction.message.channel.send(
+                                    "Could not join your voice channel to start recording.")
+                                return
+
+                            if not self.voice_connection.start_recording():
+                                logger.error("Failed to start recording after connecting.")
+                                await self.bot_state_manager.stop_recording()
+                                await reaction.message.channel.send("Could not start recording in your voice channel.")
+                                return
+
+                            logger.info("Connected to voice and started new recording session.")
                         except Exception as e:
-                            logger.error(
-                                f"Error connecting to voice channel for recording: {e}"
-                            )
+                            logger.error(f"Error connecting to voice channel for recording: {e}")
                             await self.bot_state_manager.stop_recording()
-                            await reaction.message.channel.send(
-                                "Could not join your voice channel to start recording."
-                            )
+                            await reaction.message.channel.send("Could not join your voice channel to start recording.")
                             return
                     # Case 3: Neither bot nor user is in a voice channel
                     else:
                         logger.warning(
-                            "Bot is not connected to a voice channel in this guild, and user is not in a voice channel."
-                        )
+                            "Bot is not connected to a voice channel in this guild, and user is not in a voice channel.")
                         await self.bot_state_manager.stop_recording()
                         await reaction.message.channel.send(
-                            "You need to be in a voice channel, or the bot needs to be in one, to start recording."
-                        )
+                            "You need to be in a voice channel, or the bot needs to be in one, to start recording.")
                         return
 
             # Handle ❌ reaction to cancel recording
             elif (
-                    reaction.emoji == "❌"
-                    and self.bot_state_manager.current_state == BotStateEnum.RECORDING
-                    and self.bot_state_manager.is_authorized(user)
-            ):
+                    reaction.emoji == "❌" and self.bot_state_manager.current_state == BotStateEnum.RECORDING and self.bot_state_manager.is_authorized(
+                user)):
                 if await self.bot_state_manager.stop_recording():
-                    if self.voice_client and self.voice_client.is_listening():
-                        self.voice_client.stop_listening()
+                    # Stop recording using the voice connection manager
+                    if self.voice_connection.is_recording():
+                        self.voice_connection.stop_recording()
                         logger.info("Stopped listening due to cancellation.")
                     await reaction.message.channel.send(
-                        f"{user.display_name} canceled recording. Returning to standby."
-                    )
+                        f"{user.display_name} canceled recording. Returning to standby.")
 
     @commands.Cog.listener()
-    async def on_reaction_remove(
-            self, reaction: discord.Reaction, user: discord.User
-    ) -> None:
+    async def on_reaction_remove(self, reaction: discord.Reaction, user: discord.User) -> None:
         """
         Event listener for when a reaction is removed from a message.
 
@@ -287,41 +240,24 @@ class VoiceCog(commands.Cog):
 
         # Check if this is a 🎙 reaction removal on the standby message during recording
         if (
-                self.bot_state_manager.standby_message
-                and reaction.message.id == self.bot_state_manager.standby_message.id
-                and reaction.emoji == "🎙"
-                and self.bot_state_manager.current_state == BotStateEnum.RECORDING
-                and self.bot_state_manager.is_authorized(user)
-        ):
-            # Verify voice client is available
-            if reaction.message.guild and reaction.message.guild.voice_client:
-                self.voice_client = reaction.message.guild.voice_client
-            else:
-                logger.warning(
-                    "Voice client not found in guild during reaction_remove for recording."
-                )
-                await reaction.message.channel.send(
-                    "Bot is not in a voice channel or voice client is missing."
-                )
+                self.bot_state_manager.standby_message and reaction.message.id == self.bot_state_manager.standby_message.id and reaction.emoji == "🎙" and self.bot_state_manager.current_state == BotStateEnum.RECORDING and self.bot_state_manager.is_authorized(
+            user)):
+            # Verify voice connection is available and recording
+            if not self.voice_connection.is_connected():
+                logger.warning("Voice connection not available during reaction_remove for recording.")
+                await reaction.message.channel.send("Bot is not in a voice channel or voice client is missing.")
                 await self.bot_state_manager.stop_recording()
                 return
 
             # Process recorded audio if available
-            if (
-                    self.voice_client
-                    and hasattr(self.voice_client, "sink")
-                    and self.voice_client.sink
-            ):
-                # Get the recorded PCM data and stop listening
-                pcm_data = bytes(self.voice_client.sink.audio_data)
-                self.voice_client.stop_listening()
+            if self.voice_connection.is_recording():
+                # Get the recorded PCM data and stop recording
+                pcm_data = self.voice_connection.stop_recording()
                 logger.info("Stopped listening on reaction remove.")
 
                 if pcm_data:
                     # Process and send the audio data
-                    processed_audio = await self.audio_manager.ffmpeg_to_24k_mono(
-                        pcm_data
-                    )
+                    processed_audio = await self.audio_manager.ffmpeg_to_24k_mono(pcm_data)
                     base64_audio = self.audio_manager.encode_to_base64(processed_audio)
                     await self._send_audio_events(base64_audio)
                 else:
@@ -330,12 +266,8 @@ class VoiceCog(commands.Cog):
                 # Return to standby state
                 await self.bot_state_manager.stop_recording()
             else:
-                logger.warning(
-                    "Audio sink not available or voice client missing during reaction_remove."
-                )
-                await reaction.message.channel.send(
-                    "Recording was not properly started or no audio data was captured."
-                )
+                logger.warning("No active recording found during reaction_remove.")
+                await reaction.message.channel.send("Recording was not properly started or no audio data was captured.")
                 await self.bot_state_manager.stop_recording()
 
     @commands.command(name="connect")
@@ -358,41 +290,9 @@ class VoiceCog(commands.Cog):
 
         voice_channel = ctx.author.voice.channel
 
-        # Handle voice channel connection or movement
-        if self.voice_client and self.voice_client.is_connected():
-            if self.voice_client.channel != voice_channel:
-                # Move to the user's voice channel if connected to a different one
-                try:
-                    await self.voice_client.move_to(voice_channel)
-                except Exception as e:
-                    await ctx.send(f"Error moving to voice channel: {e}")
-                    return
-        else:
-            # Connect to the voice channel if not already connected
-            try:
-                self.voice_client = await voice_channel.connect(
-                    cls=voice_recv.VoiceRecvClient
-                )
-            except discord.DiscordException as e:
-                await ctx.send(
-                    f"Already connected to a voice channel or failed to connect: {str(e)}"
-                )
-                return
-            except Exception as e:
-                await ctx.send(f"An error occurred during connection: {str(e)}")
-                return
-
-        # Start the audio playback loop if connected
-        if self.voice_client and self.voice_client.is_connected():
-            if self._playback_task is None or self._playback_task.done():
-                self._playback_task = self.bot.loop.create_task(
-                    self.audio_manager.playback_loop(self.voice_client)
-                )
-                logger.info("Playback loop started.")
-            else:
-                logger.info("Playback loop already running.")
-        else:
-            await ctx.send("Bot is not connected to a voice channel.")
+        # Connect to the voice channel using the voice connection manager
+        if not await self.voice_connection.connect_to_channel(voice_channel):
+            await ctx.send("Failed to connect to the voice channel.")
             return
 
         # Connect to the WebSocket server if not already connected
@@ -422,26 +322,8 @@ class VoiceCog(commands.Cog):
         Args:
             ctx: The command context containing information about the invocation
         """
-        # Handle voice client disconnection if connected
-        if self.voice_client and self.voice_client.is_connected():
-            # Stop listening if active
-            if self.voice_client.is_listening():
-                self.voice_client.stop_listening()
-
-            # Cancel playback task if running
-            if self._playback_task and not self._playback_task.done():
-                self._playback_task.cancel()
-                try:
-                    await self._playback_task
-                except asyncio.CancelledError:
-                    logger.info("Playback loop task cancelled.")
-                finally:
-                    self._playback_task = None
-
-            # Disconnect from voice channel
-            await self.voice_client.disconnect()
-            self.voice_client = None
-        else:
+        # Disconnect from voice channel using the voice connection manager
+        if not await self.voice_connection.disconnect():
             await ctx.send("Bot is not in a voice channel.")
 
         # Stop WebSocket connection if connected
@@ -455,5 +337,4 @@ class VoiceCog(commands.Cog):
 async def setup(bot: commands.Bot):
     raise NotImplementedError(
         "VoiceCog requires dependencies (audio_manager, bot_state_manager, websocket_manager) and cannot be loaded as a standard extension. "
-        "Instantiate and add it manually in your main script."
-    )
+        "Instantiate and add it manually in your main script.")
