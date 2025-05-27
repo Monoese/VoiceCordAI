@@ -58,9 +58,7 @@ class WebSocketManager:
 
         # Create the WebSocketConnection instance
         self._connection = WebSocketConnection(
-            url=url,
-            headers=headers,
-            message_handler=self._handle_message
+            url=url, headers=headers, message_handler=self._handle_message
         )
 
     async def _handle_message(self, message: str) -> None:
@@ -132,7 +130,9 @@ class WebSocketManager:
 
         # Wait for the connection to be established
         log.info("Waiting for WebSocket connection to be established...")
-        result = await self._connection.wait_for_state(ConnectionState.CONNECTED, timeout)
+        result = await self._connection.wait_for_state(
+            ConnectionState.CONNECTED, timeout
+        )
 
         if result:
             log.info("WebSocket connection established successfully")
@@ -249,7 +249,7 @@ class WebSocketManager:
         return metrics
 
     async def wait_for_state(
-            self, target_state: ConnectionState, timeout: float = None
+        self, target_state: ConnectionState, timeout: float = None
     ) -> bool:
         """
         Wait for the connection to reach a specific state.

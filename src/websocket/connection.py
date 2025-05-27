@@ -41,10 +41,10 @@ class WebSocketConnection:
     """
 
     def __init__(
-            self,
-            url: str,
-            headers: Dict[str, str],
-            message_handler: Callable[[str], Awaitable[None]]
+        self,
+        url: str,
+        headers: Dict[str, str],
+        message_handler: Callable[[str], Awaitable[None]],
     ) -> None:
         """
         Initialize the WebSocketConnection with connection parameters.
@@ -163,7 +163,7 @@ class WebSocketConnection:
         await self._websocket.send(message)
 
     async def wait_for_state(
-            self, target_state: ConnectionState, timeout: float = None
+        self, target_state: ConnectionState, timeout: float = None
     ) -> bool:
         """
         Wait for the connection to reach a specific state.
@@ -186,7 +186,7 @@ class WebSocketConnection:
 
         # Define a callback to check state changes
         async def state_change_callback(
-                old_state: ConnectionState, new_state: ConnectionState
+            old_state: ConnectionState, new_state: ConnectionState
         ):
             if new_state == target_state and not future.done():
                 future.set_result(True)
@@ -265,7 +265,7 @@ class WebSocketConnection:
         try:
             # Maintain CONNECTING state from _connect_forever or start()
             async with websockets.connect(
-                    self._url, additional_headers=self._headers
+                self._url, additional_headers=self._headers
             ) as ws:
                 self._websocket = ws
 
@@ -292,8 +292,8 @@ class WebSocketConnection:
             # If we're not already in DISCONNECTING or ERROR state (handled by other methods),
             # transition to DISCONNECTED if the connection was closed normally
             if self._state not in (
-                    ConnectionState.DISCONNECTING,
-                    ConnectionState.ERROR,
+                ConnectionState.DISCONNECTING,
+                ConnectionState.ERROR,
             ):
                 await self._set_state(ConnectionState.DISCONNECTED)
 
@@ -371,9 +371,9 @@ class WebSocketConnection:
             "reconnect_attempts": self._reconnect_attempts,
             "has_active_connection": self._websocket is not None,
             "has_receive_task": self._receive_task is not None
-                                and not self._receive_task.done(),
+            and not self._receive_task.done(),
             "has_connection_task": self._connection_task is not None
-                                   and not self._connection_task.done(),
+            and not self._connection_task.done(),
         }
 
         # Add WebSocket-specific metrics if connected

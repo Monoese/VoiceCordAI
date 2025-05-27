@@ -24,7 +24,7 @@ logger = get_logger(__name__)
 class VoiceConnectionManager:
     """
     Manages Discord voice channel connections and related functionality.
-    
+
     This class handles:
     - Voice channel connections and disconnections
     - Voice client management
@@ -32,10 +32,14 @@ class VoiceConnectionManager:
     - Playback task management
     """
 
-    def __init__(self, bot, audio_manager: AudioManager, ):
+    def __init__(
+        self,
+        bot,
+        audio_manager: AudioManager,
+    ):
         """
         Initialize the VoiceConnectionManager with required dependencies.
-        
+
         Args:
             bot: The Discord bot instance
             audio_manager: Handles audio processing and playback
@@ -49,10 +53,10 @@ class VoiceConnectionManager:
     async def connect_to_channel(self, voice_channel: discord.VoiceChannel) -> bool:
         """
         Connect to a voice channel or move to it if already connected elsewhere.
-        
+
         Args:
             voice_channel: The voice channel to connect to
-            
+
         Returns:
             bool: True if connection was successful, False otherwise
         """
@@ -64,13 +68,17 @@ class VoiceConnectionManager:
                     logger.info(f"Moved to voice channel: {voice_channel.name}")
             else:
                 # Connect to the voice channel if not already connected
-                self.voice_client = await voice_channel.connect(cls=voice_recv.VoiceRecvClient)
+                self.voice_client = await voice_channel.connect(
+                    cls=voice_recv.VoiceRecvClient
+                )
                 logger.info(f"Connected to voice channel: {voice_channel.name}")
 
             # Start the audio playback loop if connected
             if self.voice_client and self.voice_client.is_connected():
                 if self._playback_task is None or self._playback_task.done():
-                    self._playback_task = self.bot.loop.create_task(self.audio_manager.playback_loop(self.voice_client))
+                    self._playback_task = self.bot.loop.create_task(
+                        self.audio_manager.playback_loop(self.voice_client)
+                    )
                     logger.info("Playback loop started.")
                 return True
             return False
@@ -81,7 +89,7 @@ class VoiceConnectionManager:
     async def disconnect(self) -> bool:
         """
         Disconnect from the current voice channel and clean up resources.
-        
+
         Returns:
             bool: True if disconnection was successful, False otherwise
         """
@@ -117,7 +125,7 @@ class VoiceConnectionManager:
     def start_recording(self) -> bool:
         """
         Start recording audio from the voice channel.
-        
+
         Returns:
             bool: True if recording started successfully, False otherwise
         """
@@ -141,11 +149,15 @@ class VoiceConnectionManager:
     def stop_recording(self) -> bytes:
         """
         Stop recording audio and return the recorded data.
-        
+
         Returns:
             bytes: The recorded PCM audio data, or empty bytes if no data was captured
         """
-        if not self.voice_client or not hasattr(self.voice_client, "sink") or not self.voice_client.sink:
+        if (
+            not self.voice_client
+            or not hasattr(self.voice_client, "sink")
+            or not self.voice_client.sink
+        ):
             logger.warning("Cannot stop recording: No active recording or sink.")
             return bytes()
 
@@ -162,7 +174,7 @@ class VoiceConnectionManager:
     def is_connected(self) -> bool:
         """
         Check if the bot is connected to a voice channel.
-        
+
         Returns:
             bool: True if connected, False otherwise
         """
@@ -171,8 +183,12 @@ class VoiceConnectionManager:
     def is_recording(self) -> bool:
         """
         Check if the bot is currently recording audio.
-        
+
         Returns:
             bool: True if recording, False otherwise
         """
-        return (self.voice_client is not None and self.voice_client.is_connected() and self.voice_client.is_listening())
+        return (
+            self.voice_client is not None
+            and self.voice_client.is_connected()
+            and self.voice_client.is_listening()
+        )
