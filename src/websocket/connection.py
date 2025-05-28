@@ -96,7 +96,7 @@ class WebSocketConnection:
                 # Increment reconnect attempts when reconnecting
                 elif new_state == ConnectionState.RECONNECTING:
                     self._reconnect_attempts += 1
-                
+
                 # Notify all tasks waiting on the condition
                 self._state_condition.notify_all()
 
@@ -185,14 +185,14 @@ class WebSocketConnection:
         async with self._state_condition:  # Acquires the lock
             if self._state == target_state:
                 return True
-            
+
             try:
                 # wait_for will release the lock while waiting and reacquire it
                 await asyncio.wait_for(
                     self._state_condition.wait_for(lambda: self._state == target_state),
-                    timeout=timeout
+                    timeout=timeout,
                 )
-                return True # State is now target_state
+                return True  # State is now target_state
             except asyncio.TimeoutError:
                 log.warning(f"Timeout waiting for state {target_state.name}")
                 # Final check in case state changed right before timeout

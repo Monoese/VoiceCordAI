@@ -21,7 +21,12 @@ from src.audio.audio import AudioManager
 from src.bot.voice_connection import VoiceConnectionManager
 from src.state.state import BotState, BotStateEnum
 from src.utils.logger import get_logger
-from src.websocket.events.events import EVENT_TYPE_MAPPING, SessionUpdateEvent
+from src.websocket.events.events import (
+    SessionUpdateEvent,
+    InputAudioBufferAppendEvent,
+    InputAudioBufferCommitEvent,
+    ResponseCreateEvent,
+)
 from src.websocket.manager import WebSocketManager
 
 # Configure logger for this module
@@ -97,38 +102,26 @@ class VoiceCog(commands.Cog):
         Args:
             base64_audio: Base64-encoded audio data to send to the server
         """
-        # Send event to append audio to the input buffer
-        append_event_data = {
-            "event_id": f"event_{uuid.uuid4()}",
-            "type": "input_audio_buffer.append",
-            "audio": base64_audio,
-        }
-        append_event = EVENT_TYPE_MAPPING["input_audio_buffer.append"](
-            **append_event_data
+        append_event = InputAudioBufferAppendEvent(
+            event_id=f"event_{uuid.uuid4()}",
+            type="input_audio_buffer.append",
+            audio=base64_audio,
         )
         if not await self.websocket_manager.safe_send_event(append_event):
             logger.error("Failed to send audio append event")
             return
 
-        # Send event to commit the audio buffer for processing
-        commit_event_data = {
-            "event_id": f"event_{uuid.uuid4()}",
-            "type": "input_audio_buffer.commit",
-        }
-        commit_event = EVENT_TYPE_MAPPING["input_audio_buffer.commit"](
-            **commit_event_data
+        commit_event = InputAudioBufferCommitEvent(
+            event_id=f"event_{uuid.uuid4()}",
+            type="input_audio_buffer.commit",
         )
         if not await self.websocket_manager.safe_send_event(commit_event):
             logger.error("Failed to send audio commit event")
             return
 
-        # Send event to request a response based on the committed audio
-        response_create_data = {
-            "event_id": f"event_{uuid.uuid4()}",
-            "type": "response.create",
-        }
-        response_create_event = EVENT_TYPE_MAPPING["response.create"](
-            **response_create_data
+        response_create_event = ResponseCreateEvent(
+            event_id=f"event_{uuid.uuid4()}",
+            type="response.create",
         )
         if not await self.websocket_manager.safe_send_event(response_create_event):
             logger.error("Failed to send response create event")
@@ -146,7 +139,7 @@ class VoiceCog(commands.Cog):
             ctx: The command context containing information about the invocation
         """
         if await self.bot_state_manager.initialize_standby(ctx):
-            return  # Successfully transitioned to standby mode
+            return
         await ctx.send("Bot is already active in another state.")
 
     @commands.command(name="-listen")
@@ -161,7 +154,7 @@ class VoiceCog(commands.Cog):
             ctx: The command context containing information about the invocation
         """
         if await self.bot_state_manager.reset_to_idle():
-            return  # Successfully reset to idle state
+            return
         await ctx.send("Bot is already in idle state.")
 
     @commands.Cog.listener()
@@ -199,7 +192,6 @@ class VoiceCog(commands.Cog):
                 if await self.bot_state_manager.start_recording(user):
                     # Case 1: Bot is already in a voice channel in this guild
                     if reaction.message.guild and reaction.message.guild.voice_client:
-                        # Use existing voice client through the voice connection manager
                         self.voice_connection.voice_client = (
                             reaction.message.guild.voice_client
                         )
@@ -215,7 +207,6 @@ class VoiceCog(commands.Cog):
                             logger.info(
                                 f"User {user.name} is in voice channel {user.voice.channel.name}. Bot connecting."
                             )
-                            # Connect to the user's voice channel and start recording
                             if not await self.voice_connection.connect_to_channel(
                                 user.voice.channel
                             ):
@@ -266,7 +257,6 @@ class VoiceCog(commands.Cog):
                 and self.bot_state_manager.is_authorized(user)
             ):
                 if await self.bot_state_manager.stop_recording():
-                    # Stop recording using the voice connection manager
                     if self.voice_connection.is_recording():
                         self.voice_connection.stop_recording()
                         logger.info("Stopped listening due to cancellation.")
@@ -317,12 +307,10 @@ class VoiceCog(commands.Cog):
 
             # Process recorded audio if available
             if self.voice_connection.is_recording():
-                # Get the recorded PCM data and stop recording
                 pcm_data = self.voice_connection.stop_recording()
                 logger.info("Stopped listening on reaction remove.")
 
                 if pcm_data:
-                    # Process and send the audio data
                     processed_audio = await self.audio_manager.ffmpeg_to_24k_mono(
                         pcm_data
                     )
@@ -331,7 +319,6 @@ class VoiceCog(commands.Cog):
                 else:
                     await reaction.message.channel.send("No audio data was captured.")
 
-                # Return to standby state
                 await self.bot_state_manager.stop_recording()
             else:
                 logger.warning("No active recording found during reaction_remove.")
@@ -360,7 +347,6 @@ class VoiceCog(commands.Cog):
 
         voice_channel = ctx.author.voice.channel
 
-        # Connect to the voice channel using the voice connection manager
         if not await self.voice_connection.connect_to_channel(voice_channel):
             await ctx.send("Failed to connect to the voice channel.")
             return
@@ -394,7 +380,6 @@ class VoiceCog(commands.Cog):
         Args:
             ctx: The command context containing information about the invocation
         """
-        # Disconnect from voice channel using the voice connection manager
         if not await self.voice_connection.disconnect():
             await ctx.send("Bot is not in a voice channel.")
 
