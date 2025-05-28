@@ -70,6 +70,7 @@ class WebSocketConnection:
         self._state = ConnectionState.DISCONNECTED
         self._state_lock = asyncio.Lock()  # For thread-safe state transitions
         self._reconnect_attempts = 0
+        self._state_condition = asyncio.Condition(lock=self._state_lock)
 
     async def _set_state(self, new_state: ConnectionState) -> None:
         """
@@ -95,6 +96,9 @@ class WebSocketConnection:
                 # Increment reconnect attempts when reconnecting
                 elif new_state == ConnectionState.RECONNECTING:
                     self._reconnect_attempts += 1
+                
+                # Notify all tasks waiting on the condition
+                self._state_condition.notify_all()
 
     async def start(self) -> None:
         """
@@ -178,40 +182,22 @@ class WebSocketConnection:
         Returns:
             bool: True if the target state was reached, False if timed out
         """
-        if self._state == target_state:
-            return True
-
-        # Create a future that will be set when the state changes to the target state
-        future = asyncio.Future()
-
-        # Define a callback to check state changes
-        async def state_change_callback(
-            old_state: ConnectionState, new_state: ConnectionState
-        ):
-            if new_state == target_state and not future.done():
-                future.set_result(True)
-
-        # Store the original _set_state method
-        original_set_state = self._set_state
-
-        # Override _set_state to check for the target state
-        async def wrapped_set_state(new_state: ConnectionState):
-            old_state = self._state
-            await original_set_state(new_state)
-            await state_change_callback(old_state, new_state)
-
-        # Replace the method temporarily
-        self._set_state = wrapped_set_state
-
-        try:
-            # Wait for the future to be set or timeout
-            return await asyncio.wait_for(future, timeout)
-        except asyncio.TimeoutError:
-            log.warning(f"Timeout waiting for state {target_state.name}")
-            return False
-        finally:
-            # Restore the original method
-            self._set_state = original_set_state
+        async with self._state_condition:  # Acquires the lock
+            if self._state == target_state:
+                return True
+            
+            try:
+                # wait_for will release the lock while waiting and reacquire it
+                await asyncio.wait_for(
+                    self._state_condition.wait_for(lambda: self._state == target_state),
+                    timeout=timeout
+                )
+                return True # State is now target_state
+            except asyncio.TimeoutError:
+                log.warning(f"Timeout waiting for state {target_state.name}")
+                # Final check in case state changed right before timeout
+                return self._state == target_state
+            # asyncio.CancelledError will propagate naturally
 
     async def _maintain_connection(self) -> None:
         """
@@ -263,7 +249,7 @@ class WebSocketConnection:
         5. Transitions back to appropriate state when connection closes
         """
         try:
-            # Maintain CONNECTING state from _connect_forever or start()
+            # Called by _maintain_connection
             async with websockets.connect(
                 self._url, additional_headers=self._headers
             ) as ws:
