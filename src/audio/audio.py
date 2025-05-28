@@ -1,19 +1,6 @@
-"""
-Audio processing module for handling Discord voice data.
-
-This module provides functionality for:
-- Recording audio from Discord voice channels
-- Processing and converting audio data between different formats
-- Encoding audio to base64 for transmission
-- Playing back audio responses in Discord voice channels
-
-The module uses pydub for audio processing and the discord.py voice_recv
-extension for capturing audio from Discord voice channels.
-"""
-
 import asyncio
+import os
 import base64
-from io import BytesIO
 from typing import Any, Optional, ByteString
 
 from discord import FFmpegPCMAudio, User
@@ -21,36 +8,34 @@ from discord.ext import voice_recv
 
 from src.utils.logger import get_logger
 
-# Configure logger for this module
 logger = get_logger(__name__)
 
 
 class AudioManager:
     """
-    Manages audio processing, recording, and playback for the Discord bot.
+    Manages audio processing, recording, and streaming playback for the Discord bot.
 
     This class handles:
     - Creating audio sinks for recording from Discord voice channels
     - Processing raw PCM audio data (resampling, format conversion)
     - Encoding audio to base64 for transmission to external services
-    - Managing audio playback in Discord voice channels
-    - Buffering and queuing audio for smooth playback
+    - Managing streaming audio playback in Discord voice channels
+    - Queuing audio chunks for real-time playback
     """
 
     def __init__(self) -> None:
         """
-        Initialize the AudioManager with empty buffers and queues.
+        Initialize the AudioManager for streaming playback.
 
         Sets up:
-        - response_buffer: Temporary storage for audio data received from external services
-        - output_queue: Queue for audio files waiting to be played back
+        - audio_chunk_queue: Queue for audio chunks to be streamed for playback
+        - _playback_control_event: Event to signal the playback loop
+        - _current_stream_id: Identifier for the current playback stream
         """
-        self.response_buffer: bytearray = (
-            bytearray()
-        )  # Buffer for incoming audio responses
-        self.output_queue: asyncio.Queue[BytesIO] = (
-            asyncio.Queue()
-        )  # Queue for audio playback
+        self.audio_chunk_queue: asyncio.Queue[Optional[bytes]] = asyncio.Queue()
+        self._playback_control_event = asyncio.Event()  # Used to signal playback loop
+        self._current_stream_id: Optional[str] = None
+        logger.debug("AudioManager initialized for streaming playback.")
 
     class PCM16Sink(voice_recv.AudioSink):
         """
@@ -123,28 +108,6 @@ class AudioManager:
         """
         return self.PCM16Sink()
 
-    def extend_response_buffer(self, audio_data: ByteString) -> None:
-        """
-        Add new audio data to the response buffer.
-
-        This method is used to accumulate audio data received from external services
-        before it's processed and queued for playback.
-
-        Args:
-            audio_data: The audio data to add to the buffer
-        """
-        self.response_buffer.extend(audio_data)
-        logger.debug(f"Added {len(audio_data)} bytes to response buffer")
-
-    def clear_response_buffer(self) -> None:
-        """
-        Clear the response buffer after processing.
-
-        This method is called after the accumulated audio data has been
-        processed and queued for playback to free up memory.
-        """
-        self.response_buffer.clear()
-
     async def ffmpeg_to_24k_mono(self, raw: bytes) -> bytes:
         """
         Executes FFmpeg to resample and convert raw audio input from 48kHz stereo
@@ -212,66 +175,227 @@ class AudioManager:
         """
         return base64.b64encode(pcm_data).decode("utf-8")
 
-    async def enqueue_audio(self, audio_buffer: ByteString) -> None:
-        """
-        Enqueue raw PCM audio data for playback in Discord.
+    async def start_new_audio_stream(self, stream_id: str):
+        """Signals the playback_loop to prepare for a new audio stream."""
+        if self._current_stream_id is not None and self._current_stream_id != stream_id:
+            logger.warning(
+                f"AudioManager: Request to start new stream {stream_id} while {self._current_stream_id} is active. Ending previous stream first."
+            )
+            await self.end_audio_stream()
 
-        This method puts the raw PCM audio in a buffer for FFmpegPCMAudio
-        to handle resampling and encoding on the fly.
+        self._current_stream_id = stream_id
+        logger.info(
+            f"AudioManager: Preparing for new audio stream {self._current_stream_id}"
+        )
 
-        Args:
-            audio_buffer: Raw PCM data (e.g. 24kHz mono s16le) to enqueue
-        """
-        # Wrap raw PCM data in a buffer for FFmpegPCMAudio to read and resample
-        pcm_buffer = BytesIO(bytes(audio_buffer))
-        await self.output_queue.put(pcm_buffer)
+        self._playback_control_event.set()  # Signal playback_loop to start/check for the new stream
+
+    async def add_audio_chunk(self, audio_chunk: bytes):
+        """Adds an audio chunk to the current stream's queue."""
+        if self._current_stream_id is None:
+            logger.warning(
+                "AudioManager: No active stream to add audio chunk. Ignoring."
+            )
+            return
+        await self.audio_chunk_queue.put(audio_chunk)
+        logger.debug(
+            f"AudioManager: Added chunk of {len(audio_chunk)} bytes to stream {self._current_stream_id}"
+        )
+
+    async def end_audio_stream(self):
+        """Signals the end of the current audio stream."""
+        if self._current_stream_id is None:
+            logger.info("AudioManager: No active stream to end or already ended.")
+            return
+
+        logger.info(
+            f"AudioManager: Signaling end of audio stream {self._current_stream_id}"
+        )
+        await self.audio_chunk_queue.put(None)  # None is the sentinel for end of stream
 
     async def playback_loop(self, voice_client: voice_recv.VoiceRecvClient) -> None:
         """
         Continuous loop that handles audio playback in the voice channel.
-
-        This method:
-        1. Waits for audio buffers to be added to the output queue
-        2. Creates an FFmpeg audio source from each buffer
-        3. Plays the audio in the voice channel
-        4. Waits for playback to complete before processing the next item
-
-        The loop runs indefinitely until the task is cancelled externally.
-
-        Args:
-            voice_client: The Discord voice client to use for playback
+        Streams audio chunks from `audio_chunk_queue` through FFmpeg.
         """
+        active_ffmpeg_process = None
+        current_processing_stream_id = None
+        w_pipe_local = (
+            None  # Keep track of w_pipe locally for cleanup in this loop's scope
+        )
+
         try:
             while True:
-                # Wait for an audio buffer to be available in the queue
-                audio_buffer = await self.output_queue.get()
-                # Create an event that notifies the end of a playback
-                playback_done = asyncio.Event()
-                # Create an audio source from the buffer
-                audio_source = FFmpegPCMAudio(
-                    audio_buffer,
-                    pipe=True,
-                    before_options="-f s16le -ar 24000 -ac 1",
-                    options="-ar 48000 -ac 2",  # resample to 48 kHz stereo for Discord
+                await self._playback_control_event.wait()
+                self._playback_control_event.clear()
+
+                if self._current_stream_id is None and self.audio_chunk_queue.empty():
+                    continue
+
+                current_processing_stream_id = self._current_stream_id
+                if current_processing_stream_id is None:
+                    logger.warning(
+                        "PlaybackLoop: Woke up but _current_stream_id is None. Skipping."
+                    )
+                    continue
+
+                logger.info(
+                    f"PlaybackLoop: Starting playback for stream {current_processing_stream_id}"
                 )
 
-                # Define callback for when playback finishes
+                r_pipe, w_pipe_local = os.pipe()  # Assign to w_pipe_local
+                playback_done = asyncio.Event()
+
+                # Ensure FFmpegPCMAudio is created within the loop for each new stream
+                audio_source = FFmpegPCMAudio(
+                    os.fdopen(r_pipe, "rb"),  # Pass the read end of the pipe
+                    pipe=True,
+                    before_options="-f s16le -ar 24000 -ac 1",
+                    options="-ar 48000 -ac 2",
+                )
+                active_ffmpeg_process = (
+                    audio_source  # Keep track of the current FFmpeg process
+                )
+
                 def log_playback_finished(error: Optional[Exception]) -> None:
-                    """Log the result of audio playback."""
+                    # Use a different variable for stream_id_in_callback to capture its value at definition time
+                    stream_id_in_callback = current_processing_stream_id
                     if error:
-                        logger.error(f"Error during audio playback: {error}")
+                        logger.error(
+                            f"Error during audio playback for stream {stream_id_in_callback}: {error}"
+                        )
                     else:
-                        logger.debug("Finished playing audio successfully")
+                        logger.info(
+                            f"PlaybackLoop: Finished playing audio for stream {stream_id_in_callback} successfully"
+                        )
                     playback_done.set()
 
-                # Start playback
                 voice_client.play(audio_source, after=log_playback_finished)
 
-                # Wait for playback to complete
-                await playback_done.wait()
+                async def feed_ffmpeg(
+                    pipe_to_write,
+                ):  # Pass w_pipe_local as an argument
+                    # Use different stream_id_in_feeder for clarity within this task
+                    stream_id_in_feeder = current_processing_stream_id
+                    writer_fp = None
+                    loop = asyncio.get_running_loop()
+                    chunk_being_processed = None
+                    try:
+                        writer_fp = os.fdopen(pipe_to_write, "wb")
+                        while True:
+                            chunk_being_processed = await self.audio_chunk_queue.get()
+                            if chunk_being_processed is None:
+                                logger.debug(
+                                    f"PlaybackLoop: EOS for stream {stream_id_in_feeder}, signaling FFmpeg."
+                                )
+                                self.audio_chunk_queue.task_done()
+                                break
 
+                            if (
+                                not self._current_stream_id
+                                or self._current_stream_id != stream_id_in_feeder
+                            ):
+                                logger.warning(
+                                    f"PlaybackLoop: Stream changed during feed. Expected {stream_id_in_feeder}, now {self._current_stream_id}. Stopping feed for old stream."
+                                )
+                                self.audio_chunk_queue.task_done()
+                                break
+
+                            try:
+                                await loop.run_in_executor(
+                                    None, writer_fp.write, chunk_being_processed
+                                )
+                                await loop.run_in_executor(None, writer_fp.flush)
+                                logger.debug(
+                                    f"PlaybackLoop: Fed {len(chunk_being_processed)} bytes to FFmpeg for stream {stream_id_in_feeder}"
+                                )
+                            except Exception as e:
+                                logger.error(
+                                    f"PlaybackLoop: Error writing/flushing to FFmpeg pipe for stream {stream_id_in_feeder}: {e}"
+                                )
+                                self.audio_chunk_queue.task_done()
+                                break
+
+                            self.audio_chunk_queue.task_done()
+                            chunk_being_processed = None
+                    except Exception as e:
+                        logger.error(
+                            f"PlaybackLoop: Unhandled error in feed_ffmpeg task for stream {stream_id_in_feeder}: {e}"
+                        )
+                        if (
+                            chunk_being_processed is not None
+                            and hasattr(self.audio_chunk_queue, "_unfinished_tasks")
+                            and self.audio_chunk_queue._unfinished_tasks > 0
+                        ):
+                            self.audio_chunk_queue.task_done()
+                    finally:
+                        if writer_fp:
+                            try:
+                                logger.debug(
+                                    f"PlaybackLoop: Closing FFmpeg pipe writer for stream {stream_id_in_feeder}."
+                                )
+                                await loop.run_in_executor(
+                                    None, writer_fp.close
+                                )  # writer_fp.close() also closes pipe_to_write
+                                logger.debug(
+                                    f"PlaybackLoop: FFmpeg pipe writer closed for stream {stream_id_in_feeder}."
+                                )
+                            except Exception as e:
+                                logger.error(
+                                    f"PlaybackLoop: Error closing FFmpeg pipe writer for stream {stream_id_in_feeder}: {e}"
+                                )
+                        else:  # if os.fdopen(pipe_to_write, 'wb') failed
+                            try:
+                                if pipe_to_write is not None:
+                                    os.close(
+                                        pipe_to_write
+                                    )  # Close raw descriptor if fdopen failed
+                                    logger.debug(
+                                        f"PlaybackLoop: Raw write pipe {pipe_to_write} closed directly for stream {stream_id_in_feeder}."
+                                    )
+                            except OSError as e:
+                                logger.error(
+                                    f"PlaybackLoop: Error closing raw pipe {pipe_to_write} for stream {stream_id_in_feeder}: {e}"
+                                )
+
+                # Pass w_pipe_local to feed_ffmpeg
+                feeder_task = asyncio.create_task(feed_ffmpeg(w_pipe_local))
+
+                await playback_done.wait()
+                await feeder_task  # Ensure feeder task is complete before proceeding
+
+                logger.info(
+                    f"PlaybackLoop: Fully completed stream {current_processing_stream_id}"
+                )
+                if active_ffmpeg_process:  # Cleanup the FFmpeg process after it's done
+                    active_ffmpeg_process.cleanup()
+                    active_ffmpeg_process = None
+
+                if self._current_stream_id == current_processing_stream_id:
+                    self._current_stream_id = None
+
+                # w_pipe_local is closed by feed_ffmpeg's writer_fp.close()
+                # r_pipe is closed by FFmpegPCMAudio's cleanup or when the process ends
+                w_pipe_local = None  # Reset for next iteration
+                current_processing_stream_id = None
+
+        except asyncio.CancelledError:
+            logger.info("PlaybackLoop: Cancelled.")
         except Exception as e:
-            logger.error(f"Error during audio playback: {e}")
+            logger.error(f"PlaybackLoop: Unhandled error: {e}", exc_info=True)
         finally:
-            # Mark this item as processed
-            self.output_queue.task_done()
+            logger.info("PlaybackLoop: Exiting.")
+            if active_ffmpeg_process:
+                active_ffmpeg_process.cleanup()
+            if (
+                w_pipe_local is not None
+            ):  # If loop exited abruptly before feed_ffmpeg closed it
+                try:
+                    os.close(w_pipe_local)
+                except OSError:
+                    pass
+            self._playback_control_event.clear()
+            if (
+                self._current_stream_id == current_processing_stream_id
+            ):  # ensure reset if loop exits abnormally
+                self._current_stream_id = None

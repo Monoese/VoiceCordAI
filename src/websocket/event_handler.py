@@ -14,7 +14,7 @@ audio data is correctly handled.
 """
 
 import base64
-from typing import Callable, Awaitable, Dict
+from typing import Callable, Awaitable, Dict, Optional
 
 from src.audio.audio import AudioManager
 from src.websocket.events.events import (
@@ -54,11 +54,15 @@ class WebSocketEventHandler:
         This constructor sets up the event handler with:
         - A reference to the AudioManager for audio processing
         - A mapping of event types to their handler methods
+        - An ID for the currently active response audio stream
 
         Args:
             audio_manager: The AudioManager instance to use for audio processing
         """
         self.audio_manager = audio_manager
+        self._active_response_stream_id: Optional[str] = (
+            None  # Tracks the ID of the current response stream
+        )
 
         # Map event types to their handler methods
         self.EVENT_HANDLERS: Dict[str, Callable[[BaseEvent], Awaitable[None]]] = {
@@ -70,29 +74,54 @@ class WebSocketEventHandler:
         }
 
     async def _handle_error(self, event: ErrorEvent) -> None:
+        """Handles error events from the WebSocket."""
         logger.error(f"Error event received: {event.error}")
 
     async def _handle_session_updated(self, event: SessionUpdatedEvent) -> None:
+        """Handles session updated events from the WebSocket."""
         logger.info(f"Handling event: {event.type}")
 
     async def _handle_session_created(self, event: SessionCreatedEvent) -> None:
+        """Handles session created events from the WebSocket."""
         logger.info(f"Handling event: {event.type}")
 
     async def _handle_response_audio_delta(
         self, event: ResponseAudioDeltaEvent
     ) -> None:
-        logger.info(f"Handling event: {event.type}")
+        # Construct a unique stream identifier from the event
+        # Using response_id and item_id should ensure uniqueness per audio response segment
+        current_event_stream_id = f"{event.response_id}-{event.item_id}"
+
+        if self._active_response_stream_id != current_event_stream_id:
+            # This is the first delta of a new audio response stream
+            self._active_response_stream_id = current_event_stream_id
+            logger.info(
+                f"EventHandler: Starting new audio stream {self._active_response_stream_id} for event {event.type} (Delta)"
+            )
+            await self.audio_manager.start_new_audio_stream(
+                self._active_response_stream_id
+            )
+
         base64_audio = event.delta
         decoded_audio = base64.b64decode(base64_audio)
 
-        self.audio_manager.extend_response_buffer(decoded_audio)
-        logger.debug(f"Buffered audio fragment: {len(decoded_audio)} bytes")
+        await self.audio_manager.add_audio_chunk(decoded_audio)
 
     async def _handle_response_audio_done(self, event: ResponseAudioDoneEvent) -> None:
-        logger.info(f"Handling event: {event.type}")
-        if self.audio_manager.response_buffer:
-            await self.audio_manager.enqueue_audio(self.audio_manager.response_buffer)
-            self.audio_manager.clear_response_buffer()
+        event_stream_id = f"{event.response_id}-{event.item_id}"
+        logger.info(
+            f"EventHandler: Received audio done for stream {event_stream_id} (Active: {self._active_response_stream_id})"
+        )
+
+        if self._active_response_stream_id == event_stream_id:
+            await self.audio_manager.end_audio_stream()
+            self._active_response_stream_id = (
+                None  # Reset, ready for the next distinct response
+            )
+        else:
+            logger.warning(
+                f"EventHandler: Received audio done for an unexpected or already completed stream {event_stream_id}. Current active stream is {self._active_response_stream_id}."
+            )
 
     async def dispatch_event(self, event: BaseEvent) -> None:
         """
@@ -110,12 +139,10 @@ class WebSocketEventHandler:
         logger.debug(f"Dispatching event: {event.type}")
         event_type = event.type
 
-        # Look up the handler for this event type
         handler = self.EVENT_HANDLERS.get(event_type)
 
         try:
             if handler:
-                # Call the appropriate handler with the event
                 await handler(event)
             else:
                 logger.warning(f"No handler found for event type: {event_type}")
