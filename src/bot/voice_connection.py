@@ -17,7 +17,6 @@ from discord.ext import voice_recv
 from src.audio.audio import AudioManager
 from src.utils.logger import get_logger
 
-# Configure logger for this module
 logger = get_logger(__name__)
 
 
@@ -41,9 +40,8 @@ class VoiceConnectionManager:
         Initialize the VoiceConnectionManager with required dependencies.
 
         Args:
-            bot: The Discord bot instance
-            audio_manager: Handles audio processing and playback
-            websocket_manager: Manages WebSocket communication with external services
+            bot: The Discord bot instance.
+            audio_manager: Handles audio processing and playback.
         """
         self.bot = bot
         self.audio_manager = audio_manager
@@ -63,27 +61,30 @@ class VoiceConnectionManager:
         try:
             if self.voice_client and self.voice_client.is_connected():
                 if self.voice_client.channel != voice_channel:
-                    # Move to the specified voice channel if connected to a different one
-                    await self.voice_client.move_to(voice_channel)
+                    await self.voice_client.move_to(
+                        voice_channel
+                    )  # Move if in a different channel
                     logger.info(f"Moved to voice channel: {voice_channel.name}")
             else:
-                # Connect to the voice channel if not already connected
+                # Establish a new connection
                 self.voice_client = await voice_channel.connect(
-                    cls=voice_recv.VoiceRecvClient
+                    cls=voice_recv.VoiceRecvClient  # Use custom client for receiving audio
                 )
                 logger.info(f"Connected to voice channel: {voice_channel.name}")
 
-            # Start the audio playback loop if connected
+            # Ensure playback loop is running for this voice client
             if self.voice_client and self.voice_client.is_connected():
                 if self._playback_task is None or self._playback_task.done():
+                    logger.info("Starting new playback loop task.")
                     self._playback_task = self.bot.loop.create_task(
                         self.audio_manager.playback_loop(self.voice_client)
                     )
-                    logger.info("Playback loop started.")
+                else:
+                    logger.info("Playback loop task already running.")
                 return True
-            return False
+            return False  # Should not happen if connect/move_to succeeded
         except Exception as e:
-            logger.error(f"Error connecting to voice channel: {e}")
+            logger.error(f"Error connecting to voice channel: {e}", exc_info=True)
             return False
 
     async def disconnect(self) -> bool:
@@ -98,28 +99,31 @@ class VoiceConnectionManager:
             return False
 
         try:
-            # Stop listening if active
-            if self.voice_client.is_listening():
+            if self.voice_client.is_listening():  # Stop any active recording
                 self.voice_client.stop_listening()
                 logger.info("Stopped listening.")
 
-            # Cancel playback task if running
-            if self._playback_task and not self._playback_task.done():
+            if (
+                self._playback_task and not self._playback_task.done()
+            ):  # Cancel audio playback loop
                 self._playback_task.cancel()
                 try:
-                    await self._playback_task
+                    await self._playback_task  # Allow task to process cancellation
                 except asyncio.CancelledError:
-                    logger.info("Playback loop task cancelled.")
+                    logger.info("Playback loop task cancelled successfully.")
+                except Exception as e_task:  # pragma: no cover
+                    logger.error(f"Error during playback task cancellation: {e_task}")
                 finally:
                     self._playback_task = None
 
-            # Disconnect from voice channel
-            await self.voice_client.disconnect()
+            await self.voice_client.disconnect()  # Disconnect from the voice channel
+            logger.info(
+                f"Disconnected from voice channel: {self.voice_client.channel.name if self.voice_client.channel else 'Unknown'}"
+            )
             self.voice_client = None
-            logger.info("Disconnected from voice channel.")
             return True
         except Exception as e:
-            logger.error(f"Error disconnecting from voice channel: {e}")
+            logger.error(f"Error disconnecting from voice channel: {e}", exc_info=True)
             return False
 
     def start_recording(self) -> bool:
@@ -162,13 +166,18 @@ class VoiceConnectionManager:
             return bytes()
 
         try:
-            # Get the recorded PCM data and stop listening
-            pcm_data = bytes(self.voice_client.sink.audio_data)
-            self.voice_client.stop_listening()
-            logger.info("Stopped recording and retrieved audio data.")
+            pcm_data = bytes(
+                self.voice_client.sink.audio_data
+            )  # Retrieve captured audio
+            self.voice_client.stop_listening()  # Stop the listening process
+            logger.info(
+                f"Stopped recording. Retrieved {len(pcm_data)} bytes of audio data."
+            )
+            # The sink itself will be cleaned up by discord.py when stop_listening is called
+            # or when a new sink is started.
             return pcm_data
         except Exception as e:
-            logger.error(f"Error stopping recording: {e}")
+            logger.error(f"Error stopping recording: {e}", exc_info=True)
             return bytes()
 
     def is_connected(self) -> bool:

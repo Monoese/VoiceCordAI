@@ -28,7 +28,6 @@ from src.websocket.events.events import (
 )
 from src.utils.logger import get_logger
 
-# Configure logger for this module
 logger = get_logger(__name__)
 
 
@@ -61,11 +60,9 @@ class WebSocketEventHandler:
             audio_manager: The AudioManager instance to use for audio processing
         """
         self.audio_manager = audio_manager
-        self._active_response_stream_id: Optional[str] = (
-            None  # Tracks the ID of the current response stream
-        )
+        # Tracks the composite ID ("response_id-item_id") of the current audio stream being received.
+        self._active_response_stream_id: Optional[str] = None
 
-        # Map event types to their handler methods
         self.EVENT_HANDLERS: Dict[str, Callable[[BaseEvent], Awaitable[None]]] = {
             "error": self._handle_error,
             "session.created": self._handle_session_created,
@@ -90,15 +87,16 @@ class WebSocketEventHandler:
     async def _handle_response_audio_delta(
         self, event: ResponseAudioDeltaEvent
     ) -> None:
-        # Construct a unique stream identifier from the event
-        # Using response_id and item_id should ensure uniqueness per audio response segment
+        """Handles incoming audio chunks (deltas) for a response."""
+        # A stream is uniquely identified by the combination of response_id and item_id.
         current_event_stream_id = f"{event.response_id}-{event.item_id}"
 
         if self._active_response_stream_id != current_event_stream_id:
-            # This is the first delta of a new audio response stream
+            # This delta belongs to a new audio stream (e.g., new item_id or new response_id).
+            # Signal AudioManager to prepare for this new stream.
             self._active_response_stream_id = current_event_stream_id
             logger.info(
-                f"EventHandler: Starting new audio stream {self._active_response_stream_id} for event {event.type} (Delta)"
+                f"EventHandler: Starting new audio stream '{self._active_response_stream_id}' for {event.type}."
             )
             await self.audio_manager.start_new_audio_stream(
                 self._active_response_stream_id
@@ -112,40 +110,44 @@ class WebSocketEventHandler:
     async def _handle_response_audio_done(self, event: ResponseAudioDoneEvent) -> None:
         event_stream_id = f"{event.response_id}-{event.item_id}"
         logger.info(
-            f"EventHandler: Received audio done for stream {event_stream_id} (Active: {self._active_response_stream_id})"
+            f"EventHandler: Received audio done for stream '{event_stream_id}' (Current active: '{self._active_response_stream_id}')"
         )
 
         if self._active_response_stream_id == event_stream_id:
-            await self.audio_manager.end_audio_stream()
+            # This 'done' message corresponds to the stream we are currently processing.
+            await self.audio_manager.end_audio_stream()  # Signal EOS to AudioManager
             self._active_response_stream_id = (
-                None  # Reset, ready for the next distinct response
+                None  # Reset, ready for the next audio stream
             )
         else:
+            # This can happen if 'done' arrives late or for a stream already superseded.
             logger.warning(
-                f"EventHandler: Received audio done for an unexpected or already completed stream {event_stream_id}. Current active stream is {self._active_response_stream_id}."
+                f"EventHandler: Received audio done for stream '{event_stream_id}', "
+                f"but current active stream is '{self._active_response_stream_id}'. Ignoring."
             )
 
     async def _handle_response_cancelled(self, event: ResponseCancelledEvent) -> None:
         """Handles response.cancelled events from the WebSocket server."""
         logger.info(
-            f"EventHandler: Received response.cancelled event (ID: {event.event_id}). Server acknowledged cancellation for response_id: {event.cancelled_response_id}."
+            f"EventHandler: Received response.cancelled event (ID: {event.event_id}). "
+            f"Server acknowledged cancellation for response_id: {event.cancelled_response_id}."
         )
-        
+
         if event.cancelled_response_id and self._active_response_stream_id:
-            # _active_response_stream_id is typically "response_id-item_id"
-            # We need to compare the response_id part.
-            active_stream_parts = self._active_response_stream_id.split('-', 1)
-            if active_stream_parts and active_stream_parts[0] == event.cancelled_response_id:
+            # The _active_response_stream_id is a composite "response_id-item_id".
+            # We need to check if the `response_id` part matches the `cancelled_response_id`.
+            active_response_id_part = self._active_response_stream_id.split("-", 1)[0]
+            if active_response_id_part == event.cancelled_response_id:
                 logger.info(
-                    f"Clearing active response stream ID {self._active_response_stream_id} "
-                    f"as it matches the cancelled_response_id {event.cancelled_response_id}."
+                    f"Clearing active response stream ID '{self._active_response_stream_id}' "
+                    f"as its response_id part matches the cancelled_response_id '{event.cancelled_response_id}'."
                 )
                 self._active_response_stream_id = None
-                # Optionally, we could also tell AudioManager to explicitly end this stream
-                # if it hasn't already been stopped by voice_client.stop() -> playback_loop cleanup.
-                # However, AudioManager's _current_stream_id is primarily for playback,
-                # and voice_client.stop() should have handled that side.
-                # await self.audio_manager.end_audio_stream() # This might be redundant or cause issues if stream already ended.
+                # Note: The AudioManager's playback for this stream should have already been
+                # stopped by VoiceCog calling voice_client.stop(), which then cleans up
+                # in the playback_loop. No explicit call to audio_manager.end_audio_stream()
+                # is made here to avoid potential race conditions or redundant signals,
+                # as the primary mechanism for stopping playback is via voice_client.stop().
 
     async def dispatch_event(self, event: BaseEvent) -> None:
         """
@@ -171,5 +173,4 @@ class WebSocketEventHandler:
             else:
                 logger.warning(f"No handler found for event type: {event_type}")
         except Exception as e:
-            # Log any errors that occur during event handling
-            logger.error(f"Error in handler for {event_type}: {e}")
+            logger.error(f"Error in handler for {event_type}: {e}", exc_info=True)

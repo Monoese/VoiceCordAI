@@ -21,7 +21,6 @@ from websockets.exceptions import ConnectionClosed
 from src.utils.logger import get_logger
 from src.websocket.connection_state import ConnectionState
 
-# Configure logger for this module
 log = get_logger(__name__)
 
 
@@ -63,14 +62,17 @@ class WebSocketConnection:
         self._send_task: Optional[asyncio.Task] = None
         self._connection_task: Optional[asyncio.Task] = None
 
-        self._connection_active = asyncio.Event()
+        self._connection_active = (
+            asyncio.Event()
+        )  # Controls the _maintain_connection loop
         self._connection_active.clear()
 
-        # Initialize state machine
         self._state = ConnectionState.DISCONNECTED
-        self._state_lock = asyncio.Lock()  # For thread-safe state transitions
+        self._state_lock = asyncio.Lock()  # Protects access to _state
         self._reconnect_attempts = 0
-        self._state_condition = asyncio.Condition(lock=self._state_lock)
+        self._state_condition = asyncio.Condition(
+            lock=self._state_lock
+        )  # For waiting on state changes
 
     async def _set_state(self, new_state: ConnectionState) -> None:
         """
@@ -92,13 +94,11 @@ class WebSocketConnection:
 
                 # Reset reconnect attempts when successfully connected
                 if new_state == ConnectionState.CONNECTED:
-                    self._reconnect_attempts = 0
-                # Increment reconnect attempts when reconnecting
+                    self._reconnect_attempts = 0  # Reset on successful connection
                 elif new_state == ConnectionState.RECONNECTING:
-                    self._reconnect_attempts += 1
+                    self._reconnect_attempts += 1  # Increment on attempt to reconnect
 
-                # Notify all tasks waiting on the condition
-                self._state_condition.notify_all()
+                self._state_condition.notify_all()  # Notify waiters of state change
 
     async def start(self) -> None:
         """
@@ -182,22 +182,22 @@ class WebSocketConnection:
         Returns:
             bool: True if the target state was reached, False if timed out
         """
-        async with self._state_condition:  # Acquires the lock
+        async with self._state_condition:  # Acquires the lock for condition variable
             if self._state == target_state:
                 return True
 
             try:
-                # wait_for will release the lock while waiting and reacquire it
+                # self._state_condition.wait_for releases the lock while waiting
+                # and reacquires it before returning.
                 await asyncio.wait_for(
                     self._state_condition.wait_for(lambda: self._state == target_state),
                     timeout=timeout,
                 )
-                return True  # State is now target_state
+                return True  # State successfully reached target_state
             except asyncio.TimeoutError:
                 log.warning(f"Timeout waiting for state {target_state.name}")
-                # Final check in case state changed right before timeout
-                return self._state == target_state
-            # asyncio.CancelledError will propagate naturally
+                return self._state == target_state  # Final check after timeout
+            # asyncio.CancelledError will propagate if the waiting task is cancelled.
 
     async def _maintain_connection(self) -> None:
         """
@@ -214,28 +214,23 @@ class WebSocketConnection:
         backoff = 1
         while self._connection_active.is_set():
             try:
-                # If we're reconnecting after a failure, update the state
-                if self._state == ConnectionState.ERROR:
+                if self._state == ConnectionState.ERROR:  # If previous attempt failed
                     await self._set_state(ConnectionState.RECONNECTING)
 
-                # Establish a single connection (this will set state to CONNECTED if successful)
+                # This call blocks until the connection is established and then subsequently closed or fails.
                 await self._establish_single_connection()
 
-                # Reset backoff on successful connection
-                backoff = 1
+                backoff = 1  # Reset backoff after a successful connection period
             except asyncio.CancelledError:
-                # Don't change state on cancellation as it's handled by stop()
+                # Cancellation is handled by stop(), so just re-raise.
                 raise
             except Exception as exc:
-                # Set state to ERROR on connection failure
-                await self._set_state(ConnectionState.ERROR)
+                await self._set_state(ConnectionState.ERROR)  # Mark state as error
                 log.error(
                     f"WebSocket error: {exc} – reconnecting in {backoff}s (attempt {self._reconnect_attempts})"
                 )
-
-                # Wait before reconnecting with exponential backoff
-                await asyncio.sleep(backoff)
-                backoff = min(backoff * 2, 60)
+                await asyncio.sleep(backoff)  # Exponential backoff
+                backoff = min(backoff * 2, 60)  # Cap backoff at 60 seconds
 
     async def _establish_single_connection(self) -> None:
         """
@@ -249,37 +244,35 @@ class WebSocketConnection:
         5. Transitions back to appropriate state when connection closes
         """
         try:
-            # Called by _maintain_connection
+            # This context manager handles the WebSocket handshake and connection.
             async with websockets.connect(
                 self._url, additional_headers=self._headers
             ) as ws:
                 self._websocket = ws
-
-                # Transition to CONNECTED state
                 await self._set_state(ConnectionState.CONNECTED)
                 log.info(f"Connected to WebSocket server → {self._url}")
 
-                # Start receive task
                 self._receive_task = asyncio.create_task(self._receive_loop())
 
-                # Wait for task to complete or fail
+                # This will block until _receive_loop finishes (due to connection close or error)
+                # or is cancelled.
                 try:
                     await self._receive_task
                 except asyncio.CancelledError:
-                    # This is expected during shutdown
+                    # Expected during shutdown via stop()
                     raise
                 except Exception as e:
                     log.error(f"Receive task failed with error: {e}")
-                    # We'll transition to ERROR state in _maintain_connection
+                    # The outer _maintain_connection loop will handle setting ERROR state.
         finally:
-            # Clear the WebSocket reference
-            self._websocket = None
+            self._websocket = None  # Clear WebSocket reference
 
-            # If we're not already in DISCONNECTING or ERROR state (handled by other methods),
-            # transition to DISCONNECTED if the connection was closed normally
+            # If the connection closed and we are not in a deliberate DISCONNECTING state
+            # or an ERROR state (which _maintain_connection will handle),
+            # then transition to DISCONNECTED. This covers normal closures.
             if self._state not in (
-                ConnectionState.DISCONNECTING,
-                ConnectionState.ERROR,
+                ConnectionState.DISCONNECTING,  # stop() is handling this
+                ConnectionState.ERROR,  # _maintain_connection will handle this
             ):
                 await self._set_state(ConnectionState.DISCONNECTED)
 
@@ -300,14 +293,15 @@ class WebSocketConnection:
                     log.exception(f"Failed to process message: {exc}")
         except ConnectionClosed as e:
             # Normal closure or connection error
-            if e.code == 1000:  # Normal closure
+            if e.code == 1000:  # Standard normal closure
                 log.info(f"WebSocket connection closed normally: {e}")
-            else:
+            else:  # Other closure codes indicate potential issues
                 log.warning(f"WebSocket connection closed with code {e.code}: {e}")
-                # The state transition will be handled by _establish_single_connection and _maintain_connection
+            # State transitions due to closure are handled by _establish_single_connection's finally block
+            # or by _maintain_connection if it was an unexpected closure.
         except Exception as e:
             log.error(f"Unexpected error in receive loop: {e}")
-            # The state transition will be handled by _establish_single_connection and _maintain_connection
+            # Similar to ConnectionClosed, state transitions are handled by callers.
 
     @property
     def connected(self) -> bool:
@@ -353,26 +347,30 @@ class WebSocketConnection:
         """
         metrics = {
             "state": self._state.name,
-            "connected": self.connected,
+            "connected": self.connected,  # True if state is CONNECTED
             "reconnect_attempts": self._reconnect_attempts,
-            "has_active_connection": self._websocket is not None,
-            "has_receive_task": self._receive_task is not None
+            "has_active_connection_object": self._websocket is not None,
+            "is_receive_task_active": self._receive_task is not None
             and not self._receive_task.done(),
-            "has_connection_task": self._connection_task is not None
+            "is_connection_maintenance_task_active": self._connection_task is not None
             and not self._connection_task.done(),
         }
 
-        # Add WebSocket-specific metrics if connected
-        if self._websocket is not None:
+        if (
+            self._websocket is not None
+        ):  # Add more specific WebSocket state if available
             try:
                 metrics.update(
                     {
-                        "ws_open": not self._websocket.closed,
-                        "ws_closing": self._websocket.closing,
+                        "websocket_is_open": not self._websocket.closed,
+                        "websocket_is_closing": self._websocket.closing,
                     }
                 )
-            except Exception:
-                # Ignore errors when trying to access WebSocket properties
+            except Exception:  # pragma: no cover
+                # Websocket object might be in an unstable state; avoid crashing health check.
+                log.debug(
+                    "Could not retrieve detailed websocket state for health metrics."
+                )
                 pass
 
         return metrics

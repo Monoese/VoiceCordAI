@@ -18,10 +18,10 @@ from typing import Dict, Any, Optional
 
 from src.utils.logger import get_logger
 
-# Configure logger for this module
 logger = get_logger(__name__)
 
-# Registry mapping event type strings to their respective event classes
+# Global registry mapping event type strings (e.g., "session.created")
+# to their corresponding event dataclass (e.g., SessionCreatedEvent).
 EVENT_TYPE_MAPPING: Dict[str, "BaseEvent"] = {}
 
 
@@ -52,16 +52,12 @@ class BaseEvent:
     """
     Base class for all WebSocket events.
 
-    This class defines the common attributes that all events must have:
-    - event_id: A unique identifier for the event
-    - type: The type of the event, used for routing and handling
-
-    It also provides methods for serialization and deserialization of events
-    to and from JSON format for WebSocket transmission.
+    This class defines the common attributes for all events: `event_id` and `type`.
+    It also provides `to_json` for serialization and `from_json` for deserialization.
     """
 
-    event_id: str  # Unique identifier for the event
-    type: str  # Type of the event, used for routing
+    event_id: str  # Unique identifier for this specific event instance.
+    type: str  # String identifying the kind of event (e.g., "session.created").
 
     def to_json(self) -> str:
         """
@@ -172,11 +168,17 @@ class ErrorEvent(BaseEvent):
 @dataclass
 class ResponseCancelEvent(BaseEvent):
     """Event sent by the client to cancel an in-progress response."""
-    response_id: Optional[str] = None # Specific response ID to cancel; if None, server cancels default.
+
+    response_id: Optional[str] = (
+        None  # Specific response ID to cancel; if None, server cancels default.
+    )
 
 
 @register_event("response.cancelled")
 @dataclass
 class ResponseCancelledEvent(BaseEvent):
     """Event received from the server confirming a response cancellation."""
-    cancelled_response_id: Optional[str] = None # The ID of the response that was actually cancelled by the server.
+
+    cancelled_response_id: Optional[str] = (
+        None  # The ID of the response that was actually cancelled by the server.
+    )

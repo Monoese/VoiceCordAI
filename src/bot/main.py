@@ -11,7 +11,6 @@ The bot is configured to use the VoiceCog for handling voice-related commands an
 """
 
 import asyncio
-import logging
 
 import discord
 from discord.ext import commands
@@ -24,25 +23,29 @@ from src.utils.logger import get_logger
 from src.websocket.event_handler import WebSocketEventHandler
 from src.websocket.manager import WebSocketManager
 
-# Set up discord.py's colored console logging
-discord.utils.setup_logging(level=logging.INFO, root=False)
+# Configure discord.py's internal logging to use a colored console output.
+# level=logging.INFO sets the level for discord.py's own loggers.
+# root=False prevents it from reconfiguring the root logger we set up in src.utils.logger.
+discord.utils.setup_logging(
+    level=Config.LOG_CONSOLE_LEVEL, root=False
+)  # Use configured console level
 
-# Configure logger for this module
 logger = get_logger(__name__)
 
-# Initialize core components
+# --- Initialize Core Application Components ---
 audio_manager: AudioManager = AudioManager()
 bot_state_manager: BotState = BotState()
 
-# Set up WebSocket communication
+# --- Set up WebSocket Communication Layer ---
 event_handler: WebSocketEventHandler = WebSocketEventHandler(
-    audio_manager=audio_manager
+    audio_manager=audio_manager  # EventHandler needs AudioManager to process audio events
 )
 websocket_manager: WebSocketManager = WebSocketManager(
-    event_handler_instance=event_handler
+    event_handler_instance=event_handler  # Manager uses EventHandler to dispatch received messages
 )
 
-# Configure Discord bot with all intents for full functionality
+# --- Configure Discord Bot ---
+# Intents.all() enables all privileged intents; for production, specify only needed intents.
 intents: discord.Intents = discord.Intents.all()
 bot: commands.Bot = commands.Bot(command_prefix=Config.COMMAND_PREFIX, intents=intents)
 
@@ -58,14 +61,18 @@ async def main():
     The function uses an async context manager to ensure proper cleanup when the bot stops.
     """
     async with bot:
-        # Add the voice cog which handles all voice-related commands and events
-        await bot.add_cog(
-            VoiceCog(bot, audio_manager, bot_state_manager, websocket_manager)
+        # Instantiate and add the VoiceCog, passing all necessary dependencies.
+        voice_cog_instance = VoiceCog(
+            bot=bot,
+            audio_manager=audio_manager,
+            bot_state_manager=bot_state_manager,
+            websocket_manager=websocket_manager,
         )
-        logger.info("VoiceCog loaded.")
+        await bot.add_cog(voice_cog_instance)
+        logger.info("VoiceCog loaded and added to the bot.")
 
-        # Start the bot with the token from configuration
-        await bot.start(Config.DISCORD_TOKEN)
+        logger.info("Starting Discord bot...")
+        await bot.start(Config.DISCORD_TOKEN)  # Connects to Discord
 
 
 if __name__ == "__main__":

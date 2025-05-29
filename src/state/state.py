@@ -54,9 +54,11 @@ class BotState:
         and no standby message.
         """
         self._current_state: BotStateEnum = BotStateEnum.IDLE
-        self._authority_user_id: Optional[str] = "anyone"
-        self._authority_user_name: Optional[str] = "anyone"
-        self._standby_message: Optional[Message] = None
+        self._authority_user_id: Optional[str] = "anyone"  # User ID or "anyone"
+        self._authority_user_name: Optional[str] = "anyone"  # User display name
+        self._standby_message: Optional[Message] = (
+            None  # The Discord message used for UI
+        )
 
     @property
     def current_state(self) -> BotStateEnum:
@@ -141,13 +143,15 @@ class BotState:
         Returns:
             bool: True if transition was successful, False if bot was not in IDLE state
         """
-        if self._current_state != BotStateEnum.IDLE: # Only allow transition from IDLE state
+        if self._current_state != BotStateEnum.IDLE:
+            # Only allow transition from IDLE state to prevent unexpected state changes.
             return False
 
         self._current_state = BotStateEnum.STANDBY
-
         self._standby_message = await ctx.send(self.get_message_content())
-        await self._standby_message.add_reaction("🎙")
+        await self._standby_message.add_reaction(
+            "🎙"
+        )  # Add initial reaction for control
         return True
 
     async def start_recording(self, user: discord.User) -> bool:
@@ -165,15 +169,17 @@ class BotState:
         Returns:
             bool: True if transition was successful, False if bot was not in STANDBY state
         """
-        if self._current_state != BotStateEnum.STANDBY: # Only allow transition from STANDBY state
+        if self._current_state != BotStateEnum.STANDBY:
+            # Only allow transition from STANDBY state.
             return False
 
         self._current_state = BotStateEnum.RECORDING
-
-        self.authority_user_id = user.id
+        self.authority_user_id = (
+            user.id
+        )  # Assign control to the user who started recording
         self._authority_user_name = user.name
 
-        await self._update_message()
+        await self._update_message()  # Update UI
         return True
 
     async def stop_recording(self) -> bool:
@@ -188,15 +194,15 @@ class BotState:
         Returns:
             bool: True if transition was successful, False if bot was not in RECORDING state
         """
-        if self._current_state != BotStateEnum.RECORDING: # Only allow transition from RECORDING state
+        if self._current_state != BotStateEnum.RECORDING:
+            # Only allow transition from RECORDING state.
             return False
 
         self._current_state = BotStateEnum.STANDBY
-
-        self.authority_user_id = "anyone"
+        self.authority_user_id = "anyone"  # Release specific user control
         self._authority_user_name = "anyone"
 
-        await self._update_message()
+        await self._update_message()  # Update UI
         return True
 
     async def reset_to_idle(self) -> bool:
@@ -211,15 +217,23 @@ class BotState:
         Returns:
             bool: True if transition was successful, False if bot was already in IDLE state
         """
-        if self._current_state == BotStateEnum.IDLE: # Don't do anything if already in IDLE state
+        if self._current_state == BotStateEnum.IDLE:
+            # Already idle, no action needed.
             return False
 
-        if self._standby_message: # Delete the standby message if it exists
-            await self._standby_message.delete()
-            self._standby_message = None
+        if self._standby_message:
+            try:
+                await self._standby_message.delete()
+            except discord.NotFound:
+                # Message might have been deleted manually, which is fine.
+                pass
+            finally:
+                self._standby_message = None
 
         self._current_state = BotStateEnum.IDLE
-        self.authority_user_id = "anyone"
+        self.authority_user_id = "anyone"  # Reset authority
+        self._authority_user_name = "anyone"
+        # No UI message to update in IDLE state.
         return True
 
     async def _update_message(self):

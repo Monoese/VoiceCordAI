@@ -2,6 +2,7 @@ import asyncio
 import os
 import base64
 from typing import Any, Optional, ByteString, Tuple
+from dataclasses import dataclass, field
 
 from discord import FFmpegPCMAudio, User
 from discord.ext import voice_recv
@@ -9,6 +10,18 @@ from discord.ext import voice_recv
 from src.utils.logger import get_logger
 
 logger = get_logger(__name__)
+
+
+@dataclass
+class _PlaybackStream:
+    """Encapsulates resources and state for a single audio playback instance."""
+
+    stream_id: str
+    ffmpeg_audio_source: FFmpegPCMAudio
+    pipe_read_fd: int
+    pipe_write_fd: int
+    playback_done_event: asyncio.Event
+    feeder_task: Optional[asyncio.Task] = field(default=None, repr=False)
 
 
 class AudioManager:
@@ -32,9 +45,16 @@ class AudioManager:
         - _playback_control_event: Event to signal the playback loop
         - _current_stream_id: Identifier for the current playback stream
         """
-        self.audio_chunk_queue: asyncio.Queue[Tuple[str, Optional[bytes]]] = asyncio.Queue()
-        self._playback_control_event = asyncio.Event() # Used to signal the playback_loop
-        self._current_stream_id: Optional[str] = None # Stores "response_id-item_id" for the current playback
+        self.audio_chunk_queue: asyncio.Queue[Tuple[str, Optional[bytes]]] = (
+            asyncio.Queue()
+        )
+        self._playback_control_event = (
+            asyncio.Event()
+        )  # Signals playback_loop to check for new work
+        # _current_stream_id stores the ID of the stream that the AudioManager is currently
+        # *expecting* to receive chunks for or has been told to start.
+        # This is set by start_new_audio_stream().
+        self._current_stream_id: Optional[str] = None
         logger.debug("AudioManager initialized for streaming playback.")
 
     class PCM16Sink(voice_recv.AudioSink):
@@ -50,8 +70,8 @@ class AudioManager:
         def __init__(self) -> None:
             """Initialize the audio sink with empty buffer and counters."""
             super().__init__()
-            self.audio_data: bytearray = bytearray()  # Buffer to store captured audio
-            self.total_bytes: int = 0  # Counter for total bytes captured
+            self.audio_data: bytearray = bytearray()  # Buffer for raw PCM audio data
+            self.total_bytes: int = 0  # Total bytes written to this sink instance
             logger.debug("New audio sink initialized")
 
         def wants_opus(self) -> bool:
@@ -72,14 +92,13 @@ class AudioManager:
 
             Args:
                 user: The Discord user who sent the audio
-                data: The audio data packet containing PCM data
+                data: The audio data packet containing PCM data (discord.VoiceReceivePacket)
             """
             if data.pcm:
-                # Add the PCM data to our buffer
-                self.audio_data.extend(data.pcm)
+                self.audio_data.extend(data.pcm)  # Append new PCM data
                 self.total_bytes += len(data.pcm)
                 logger.debug(
-                    f"Write called: Adding {len(data.pcm)} bytes. Total accumulated: {self.total_bytes} bytes"
+                    f"PCM16Sink.write: Adding {len(data.pcm)} bytes. Total accumulated: {self.total_bytes} bytes"
                 )
             else:
                 logger.warning("Write called with no PCM data")
@@ -177,242 +196,410 @@ class AudioManager:
 
     def get_current_playing_response_id(self) -> Optional[str]:
         """
-        Returns the response_id part of the current playing stream ID.
+        Returns the response_id part of the current target/playing stream ID.
         Assumes _current_stream_id is in the format "response_id-item_id".
         """
         if self._current_stream_id:
-            parts = self._current_stream_id.split('-', 1)
+            parts = self._current_stream_id.split("-", 1)
             if parts:
                 return parts[0]
         return None
 
     async def start_new_audio_stream(self, stream_id: str):
-        """Signals the playback_loop to prepare for a new audio stream."""
+        """
+        Signals the playback_loop to prepare for a new audio stream.
+        If another stream is active, an EOS marker is queued for it.
+        """
         if self._current_stream_id is not None and self._current_stream_id != stream_id:
             logger.warning(
-                f"AudioManager: Request to start new stream {stream_id} while {self._current_stream_id} is active. Ending previous stream first."
+                f"AudioManager: Request to start new stream '{stream_id}' while '{self._current_stream_id}' is active. "
+                f"Signaling EOS for previous stream '{self._current_stream_id}'."
             )
-            await self.end_audio_stream()
+            # Queue EOS for the old stream. The playback_loop and its feeder task
+            # for the old stream will handle this to terminate gracefully.
+            await self.audio_chunk_queue.put((self._current_stream_id, None))
+            # The playback_loop, when it awakens, will see the new _current_stream_id
+            # and transition by cleaning up the old stream processor and starting a new one.
 
-        self._current_stream_id = stream_id
+        self._current_stream_id = stream_id  # Update to the new target stream ID
         logger.info(
-            f"AudioManager: Preparing for new audio stream {self._current_stream_id}"
+            f"AudioManager: New target audio stream set to '{self._current_stream_id}'"
         )
-
-        self._playback_control_event.set()  # Signal playback_loop to start/check for the new stream
+        self._playback_control_event.set()  # Wake up playback_loop to handle the new stream
 
     async def add_audio_chunk(self, audio_chunk: bytes):
-        """Adds an audio chunk to the current stream's queue."""
-        current_stream_id_for_chunk = self._current_stream_id
-        if current_stream_id_for_chunk is None:
+        """Adds an audio chunk to the queue for the stream identified by `_current_stream_id`."""
+        current_target_stream_id = self._current_stream_id
+        if current_target_stream_id is None:
             logger.warning(
-                "AudioManager: No active stream to add audio chunk. Ignoring."
+                "AudioManager: No active target stream (_current_stream_id is None) to add audio chunk. Ignoring."
             )
             return
-        await self.audio_chunk_queue.put((current_stream_id_for_chunk, audio_chunk)) # Tuple: (stream_id, chunk_data)
+        await self.audio_chunk_queue.put((current_target_stream_id, audio_chunk))
         logger.debug(
-            f"AudioManager: Added chunk of {len(audio_chunk)} bytes to stream {current_stream_id_for_chunk}"
+            f"AudioManager: Added chunk of {len(audio_chunk)} bytes to queue for stream {current_target_stream_id}"
         )
 
     async def end_audio_stream(self):
-        """Signals the end of the current audio stream."""
-        stream_id_to_end = self._current_stream_id # Capture before any potential concurrent modification
+        """
+        Signals the end of the audio stream identified by `_current_stream_id`
+        by placing an EOS (None) marker into the `audio_chunk_queue`.
+        """
+        stream_id_to_end = self._current_stream_id
 
         if stream_id_to_end is None:
-            logger.info("AudioManager: No active stream to end or already ended.")
+            logger.info(
+                "AudioManager.end_audio_stream: No target stream (_current_stream_id is None) to end."
+            )
             return
 
         logger.info(
-            f"AudioManager: Signaling end of audio stream {stream_id_to_end}"
+            f"AudioManager: Signaling end of audio stream '{stream_id_to_end}' by queueing EOS."
         )
-        await self.audio_chunk_queue.put((stream_id_to_end, None)) # Tuple: (stream_id, None) for EOS
+        await self.audio_chunk_queue.put(
+            (stream_id_to_end, None)
+        )  # (stream_id, None) is the EOS marker
+        self._playback_control_event.set()  # Wake up playback_loop to process the EOS if it's idle
+
+    def _prepare_new_playback_stream(self, stream_id: str) -> _PlaybackStream:
+        """Prepares OS pipes and FFmpegPCMAudio source for a new playback stream."""
+        logger.debug(f"Preparing playback resources for stream '{stream_id}'")
+        r_pipe, w_pipe = os.pipe()  # Create a new pipe pair for this stream
+
+        # FFmpegPCMAudio will read from the read-end of the pipe (r_pipe).
+        # The _feed_audio_to_pipe task will write to the write-end (w_pipe).
+        audio_source = FFmpegPCMAudio(
+            os.fdopen(r_pipe, "rb"),  # Source for FFmpeg is the read-end of the pipe
+            pipe=True,  # Indicates that the source is a pipe
+            # FFmpeg input options: raw PCM, 16-bit little-endian, 24kHz, mono
+            before_options="-f s16le -ar 24000 -ac 1",
+            # FFmpeg output options (for Discord): 48kHz, stereo (Discord prefers stereo)
+            options="-ar 48000 -ac 2",
+        )
+        return _PlaybackStream(
+            stream_id=stream_id,
+            ffmpeg_audio_source=audio_source,
+            pipe_read_fd=r_pipe,
+            pipe_write_fd=w_pipe,
+            playback_done_event=asyncio.Event(),
+        )
+
+    async def _feed_audio_to_pipe(self, stream: _PlaybackStream):
+        """Task to feed audio chunks from the queue to the FFmpeg pipe for a given stream."""
+        writer_fp = None
+        loop = asyncio.get_running_loop()
+        feeder_stream_id = (
+            stream.stream_id
+        )  # The specific stream this feeder is responsible for
+        logger.info(f"Feeder task started for stream '{feeder_stream_id}'.")
+
+        try:
+            # Open the write-end of the pipe. FFmpeg reads from the other end.
+            writer_fp = os.fdopen(stream.pipe_write_fd, "wb")
+            while True:
+                try:
+                    # Get an item (audio chunk or EOS marker) from the shared queue
+                    item_stream_id, item_data = await self.audio_chunk_queue.get()
+                except asyncio.CancelledError:
+                    logger.info(
+                        f"Feeder for '{feeder_stream_id}': Cancelled while waiting for queue item."
+                    )
+                    raise  # Propagate cancellation
+
+                # This feeder should only process items intended for its specific stream_id.
+                if item_stream_id != feeder_stream_id:
+                    logger.warning(
+                        f"Feeder for '{feeder_stream_id}': Got item for different stream '{item_stream_id}'. Discarding."
+                    )
+                    self.audio_chunk_queue.task_done()
+                    # If the global target stream (_current_stream_id) has changed and is no longer this feeder's stream,
+                    # this feeder should stop to allow a new feeder for the new target to take over.
+                    if (
+                        self._current_stream_id != feeder_stream_id
+                        and self._current_stream_id is not None
+                    ):
+                        logger.info(
+                            f"Feeder for '{feeder_stream_id}': Global target stream changed to '{self._current_stream_id}'. Stopping this feeder."
+                        )
+                        break  # Exit loop, leading to cleanup
+                    continue  # Wait for the next relevant item
+
+                if (
+                    item_data is None
+                ):  # EOS (End Of Stream) marker for this specific stream
+                    logger.info(
+                        f"Feeder for '{feeder_stream_id}': EOS marker received."
+                    )
+                    self.audio_chunk_queue.task_done()
+                    break  # Exit loop, signaling end of this stream to FFmpeg via pipe closure
+
+                # Defensive check: If the global target stream ID has changed *while this feeder was processing*,
+                # it should stop to prevent feeding data to a potentially obsolete FFmpeg process.
+                if self._current_stream_id != feeder_stream_id:
+                    logger.info(
+                        f"Feeder for '{feeder_stream_id}': Global target stream '{self._current_stream_id}' no longer matches. Stopping feeder."
+                    )
+                    self.audio_chunk_queue.task_done()  # Mark current item as "processed" before exiting
+                    break
+
+                try:
+                    # Write audio data to the pipe in a separate thread to avoid blocking asyncio loop
+                    await loop.run_in_executor(None, writer_fp.write, item_data)
+                    await loop.run_in_executor(
+                        None, writer_fp.flush
+                    )  # Ensure data is sent to FFmpeg
+                    logger.debug(
+                        f"Feeder for '{feeder_stream_id}': Fed {len(item_data)} bytes."
+                    )
+                except BrokenPipeError:  # pragma: no cover
+                    # This typically means FFmpeg has closed the read end of the pipe.
+                    logger.warning(
+                        f"Feeder for '{feeder_stream_id}': Broken pipe. FFmpeg likely closed. Stopping feeder."
+                    )
+                    self.audio_chunk_queue.task_done()
+                    break  # Exit loop
+                except Exception as e:  # pragma: no cover
+                    logger.error(
+                        f"Feeder for '{feeder_stream_id}': Error writing/flushing: {e}",
+                        exc_info=True,
+                    )
+                    self.audio_chunk_queue.task_done()
+                    break  # Exit loop on other errors
+
+                self.audio_chunk_queue.task_done()  # Mark item as processed
+
+        except asyncio.CancelledError:
+            logger.info(f"Feeder for '{feeder_stream_id}': Cancelled.")
+            # Do not mark task_done here if cancelled during queue.get(), as item remains.
+            # If cancelled elsewhere, task_done should have been called.
+            raise  # Propagate cancellation
+        except Exception as e:  # pragma: no cover
+            logger.error(
+                f"Feeder for '{feeder_stream_id}': Unhandled error: {e}", exc_info=True
+            )
+        finally:
+            logger.info(f"Feeder for '{feeder_stream_id}': Exiting.")
+            if writer_fp:
+                try:
+                    logger.debug(
+                        f"Feeder for '{feeder_stream_id}': Closing pipe writer (fd: {stream.pipe_write_fd})."
+                    )
+                    # Closing the writer_fp also closes the underlying stream.pipe_write_fd.
+                    # This signals EOF to FFmpeg if it hasn't already exited.
+                    await loop.run_in_executor(None, writer_fp.close)
+                except Exception as e:  # pragma: no cover
+                    logger.error(
+                        f"Feeder for '{feeder_stream_id}': Error closing pipe writer: {e}"
+                    )
+
+    async def _cleanup_playback_stream(self, stream_to_cleanup: _PlaybackStream):
+        """Safely cleans up all resources for a given _PlaybackStream instance."""
+        stream_id = stream_to_cleanup.stream_id
+        logger.info(f"Cleaning up playback resources for stream '{stream_id}'")
+
+        # 1. Cancel and await the feeder task
+        if stream_to_cleanup.feeder_task and not stream_to_cleanup.feeder_task.done():
+            logger.debug(f"Cancelling feeder task for stream '{stream_id}'")
+            stream_to_cleanup.feeder_task.cancel()
+            try:
+                await (
+                    stream_to_cleanup.feeder_task
+                )  # Wait for feeder to finish cleanup (e.g., close pipe)
+            except asyncio.CancelledError:
+                logger.debug(
+                    f"Feeder task for stream '{stream_id}' was cancelled successfully."
+                )
+            except Exception as e:  # pragma: no cover
+                logger.error(
+                    f"Feeder task for stream '{stream_id}' raised an error during cancellation/await: {e}",
+                    exc_info=True,
+                )
+
+        # 2. Cleanup FFmpegPCMAudio source
+        # This should close the read-end of the pipe (stream_to_cleanup.pipe_read_fd).
+        logger.debug(
+            f"Cleaning up FFmpegPCMAudio for stream '{stream_id}' (read pipe fd: {stream_to_cleanup.pipe_read_fd})"
+        )
+        stream_to_cleanup.ffmpeg_audio_source.cleanup()
+
+        # Note on pipe FDs:
+        # - stream_to_cleanup.pipe_write_fd is closed by the feeder_task's writer_fp.close() in its finally block.
+        # - stream_to_cleanup.pipe_read_fd is closed by ffmpeg_audio_source.cleanup().
+        # Explicit os.close() calls here would be redundant and could cause errors if FDs are already closed.
+
+        # 3. If the cleaned-up stream was the globally current one, clear it.
+        if self._current_stream_id == stream_id:
+            logger.info(
+                f"AudioManager: Cleared _current_stream_id '{self._current_stream_id}' as its playback and cleanup finished."
+            )
+            self._current_stream_id = None
+
+        logger.info(f"Finished cleaning up stream '{stream_id}'")
 
     async def playback_loop(self, voice_client: voice_recv.VoiceRecvClient) -> None:
         """
-        Continuous loop that handles audio playback in the voice channel.
-        Streams audio chunks from `audio_chunk_queue` through FFmpeg.
-        """
-        active_ffmpeg_process = None
-        w_pipe_local = None
-        current_processing_stream_id: Optional[str] = None # Initialize for robustness
+        Main loop for managing audio playback.
 
+        This loop waits for signals (via `_playback_control_event`) and manages the
+        lifecycle of audio streams:
+        - Stops and cleans up old streams if a new `_current_stream_id` is set or if the current one ends.
+        - Prepares and starts new streams based on `_current_stream_id`.
+        - Handles one `_PlaybackStream` (via `current_stream_processor`) at a time.
+        """
+        current_stream_processor: Optional[_PlaybackStream] = None
         try:
             while True:
-                await self._playback_control_event.wait()
-                self._playback_control_event.clear()
+                await (
+                    self._playback_control_event.wait()
+                )  # Wait for a signal to do work
+                self._playback_control_event.clear()  # Reset event for next signal
 
-                if self._current_stream_id is None and self.audio_chunk_queue.empty():
-                    continue
-
-                # Capture the stream ID for this specific playback session
-                current_processing_stream_id = self._current_stream_id
-                if current_processing_stream_id is None:
-                    logger.warning(
-                        "PlaybackLoop: Woke up but _current_stream_id is None. Skipping."
-                    )
-                    continue
-
-                logger.info(
-                    f"PlaybackLoop: Starting playback for stream {current_processing_stream_id}"
+                logger.debug(
+                    f"PlaybackLoop: Awakened. Target stream: '{self._current_stream_id}'. "
+                    f"Current processor: '{current_stream_processor.stream_id if current_stream_processor else 'None'}'"
                 )
 
-                r_pipe, w_pipe_local = os.pipe()
-                playback_done = asyncio.Event()
+                # --- Phase 1: Stop/Transition Current Stream ---
+                # If there's an active stream processor, check if it needs to be stopped.
+                # This happens if:
+                #   a) The global target stream (_current_stream_id) is now None (signaling stop all).
+                #   b) The global target stream (_current_stream_id) has changed to a different ID.
+                if current_stream_processor:
+                    processor_id = current_stream_processor.stream_id
+                    global_target_id = self._current_stream_id
 
-                # FFmpegPCMAudio is created per stream to handle its audio pipe
-                audio_source = FFmpegPCMAudio(
-                    os.fdopen(r_pipe, "rb"), # Pass the read end of the OS pipe
-                    pipe=True,
-                    before_options="-f s16le -ar 24000 -ac 1", # Input format for FFmpeg
-                    options="-ar 48000 -ac 2", # Output format for Discord
-                )
-                active_ffmpeg_process = audio_source
-
-                def log_playback_finished(error: Optional[Exception]) -> None:
-                    # This callback is invoked by discord.py when voice_client.play() finishes or is stopped.
-                    stream_id_in_callback = current_processing_stream_id # Capture stream ID for this callback context
-                    if error:
-                        logger.error(
-                            f"Error during audio playback for stream {stream_id_in_callback}: {error}" # Includes errors from voice_client.stop()
-                        )
-                    else:
+                    if global_target_id is None or global_target_id != processor_id:
                         logger.info(
-                            f"PlaybackLoop: Finished playing audio for stream {stream_id_in_callback} successfully"
+                            f"PlaybackLoop: Global target is now '{global_target_id}'. "
+                            f"Current processor for '{processor_id}' needs to stop."
                         )
-                    playback_done.set()
+                        if voice_client.is_playing() or voice_client.is_paused():
+                            logger.debug(
+                                f"PlaybackLoop: Calling voice_client.stop() for stream '{processor_id}'."
+                            )
+                            voice_client.stop()  # This will trigger the 'after' callback for the FFmpegPCMAudio source.
+                            # The 'after' callback is responsible for setting current_stream_processor.playback_done_event.
 
-                voice_client.play(audio_source, after=log_playback_finished)
-
-                # Pass current_processing_stream_id explicitly to feed_ffmpeg
-                async def feed_ffmpeg(pipe_to_write, feeder_stream_id: str):
-                    writer_fp = None
-                    loop = asyncio.get_running_loop()
-                    
-                    try:
-                        writer_fp = os.fdopen(pipe_to_write, "wb")
-                        while True:
-                            item_stream_id, item_data = await self.audio_chunk_queue.get()
-
-                            if item_stream_id != feeder_stream_id: # Item not for this feeder
-                                logger.warning(
-                                    f"PlaybackLoop (Feeder for {feeder_stream_id}): Discarding item for different stream {item_stream_id}."
-                                )
-                                self.audio_chunk_queue.task_done()
-                                # If AudioManager's current stream has changed and it's not this feeder's stream,
-                                # this feeder can stop to avoid pointlessly draining unrelated items from the queue.
-                                if self._current_stream_id and self._current_stream_id != feeder_stream_id:
-                                    logger.info(f"PlaybackLoop (Feeder for {feeder_stream_id}): Global stream changed to {self._current_stream_id}, stopping this feeder early.")
-                                    break 
-                                continue
-
-                            if item_data is None:  # EOS marker for this stream
-                                logger.debug(
-                                    f"PlaybackLoop: EOS for stream {feeder_stream_id} received by its feeder."
-                                )
-                                self.audio_chunk_queue.task_done()
-                                break # End of this stream
-
-                            # Audio chunk for the current stream
-                            if not self._current_stream_id: # Global context check
-                                logger.warning(
-                                    f"PlaybackLoop (Feeder for {feeder_stream_id}): Global stream ID became None while processing. Stopping feed."
-                                )
-                                self.audio_chunk_queue.task_done()
-                                break
-
+                        # Wait for the 'after' callback to signal playback completion or for a timeout.
+                        # This ensures that resources aren't cleaned up prematurely if discord.py is still using them.
+                        if not current_stream_processor.playback_done_event.is_set():
+                            logger.debug(
+                                f"PlaybackLoop: Waiting for playback_done_event for '{processor_id}' after signaling stop."
+                            )
                             try:
-                                await loop.run_in_executor(
-                                    None, writer_fp.write, item_data
+                                await asyncio.wait_for(
+                                    current_stream_processor.playback_done_event.wait(),
+                                    timeout=5.0,
                                 )
-                                await loop.run_in_executor(None, writer_fp.flush)
-                                logger.debug(
-                                    f"PlaybackLoop: Fed {len(item_data)} bytes to FFmpeg for stream {feeder_stream_id}"
+                            except asyncio.TimeoutError:  # pragma: no cover
+                                logger.warning(
+                                    f"PlaybackLoop: Timeout waiting for playback_done_event for '{processor_id}'. Proceeding with cleanup."
                                 )
-                            except Exception as e: # Typically BrokenPipeError if FFmpeg/discord.py closes pipe (e.g., on voice_client.stop())
-                                logger.error(
-                                    f"PlaybackLoop: Error writing/flushing to FFmpeg pipe for stream {feeder_stream_id}: {e}"
-                                )
-                                self.audio_chunk_queue.task_done()
-                                break # Exit on write error
 
-                            self.audio_chunk_queue.task_done()
-                    
-                    except asyncio.CancelledError:
-                        logger.info(f"PlaybackLoop (Feeder for {feeder_stream_id}): Cancelled.")
-                        # If cancelled after a get() but before task_done(), queue might be off
-                        # However, typical cancellation should handle this.
-                        # If self.audio_chunk_queue.get() was the cancellation point, no task_done needed.
-                        # If it was after, the specific item might not be task_done'd.
-                        # This is complex; relying on explicit task_done() in normal flow is primary.
-                    except Exception as e:
-                        logger.error(
-                            f"PlaybackLoop: Unhandled error in feed_ffmpeg task for stream {feeder_stream_id}: {e}"
+                        # Now, perform full cleanup of the stream processor.
+                        await self._cleanup_playback_stream(current_stream_processor)
+                        current_stream_processor = None  # Mark as no longer active
+                        logger.info(
+                            f"PlaybackLoop: Finished stopping and cleaning up processor for '{processor_id}'."
                         )
-                        # If an item was fetched by get() and then an unexpected error occurred before task_done(),
-                        # it needs to be marked. However, Queue.get() itself is the main point where _unfinished_tasks increments.
-                        # If an error happens after get() but before task_done(), the count is off.
-                        # The current structure aims to call task_done() in all logical exits.
-                    finally:
-                        if writer_fp:
-                            try:
-                                logger.debug(
-                                    f"PlaybackLoop: Closing FFmpeg pipe writer for stream {feeder_stream_id}."
-                                )
-                                await loop.run_in_executor(None, writer_fp.close)
-                                logger.debug(
-                                    f"PlaybackLoop: FFmpeg pipe writer closed for stream {feeder_stream_id}."
-                                )
-                            except Exception as e:
-                                logger.error(
-                                    f"PlaybackLoop: Error closing FFmpeg pipe writer for stream {feeder_stream_id}: {e}"
-                                )
-                        elif pipe_to_write is not None: # If writer_fp was never opened but pipe exists
-                            try:
-                                os.close(pipe_to_write)
-                                logger.debug(
-                                    f"PlaybackLoop: Raw write pipe {pipe_to_write} closed directly for stream {feeder_stream_id}."
-                                )
-                            except OSError as e:
-                                logger.error(
-                                    f"PlaybackLoop: Error closing raw pipe {pipe_to_write} for stream {feeder_stream_id}: {e}"
-                                )
-                
-                feeder_task = asyncio.create_task(feed_ffmpeg(w_pipe_local, current_processing_stream_id))
 
-                await playback_done.wait() # Waits for log_playback_finished to be called
-                await feeder_task
+                # --- Phase 2: Start New Stream ---
+                # If there's a global target stream (_current_stream_id) and no stream is currently being processed,
+                # start a new stream processor for this target.
+                if self._current_stream_id and not current_stream_processor:
+                    target_id_for_new_stream = self._current_stream_id
+                    logger.info(
+                        f"PlaybackLoop: Preparing to start new stream processor for target '{target_id_for_new_stream}'."
+                    )
 
-                logger.info(
-                    f"PlaybackLoop: Fully completed stream {current_processing_stream_id}"
-                )
-                if active_ffmpeg_process:
-                    active_ffmpeg_process.cleanup()
-                    active_ffmpeg_process = None
+                    current_stream_processor = self._prepare_new_playback_stream(
+                        target_id_for_new_stream
+                    )
 
-                # Reset _current_stream_id only if it's still the one we just processed.
-                # This avoids a race condition if a new stream started (and set _current_stream_id)
-                # while this one was in its final cleanup stages.
-                if self._current_stream_id == current_processing_stream_id:
-                    self._current_stream_id = None
-                
-                w_pipe_local = None # Pipe is closed, reset local var
+                    # Start the feeder task for this new stream.
+                    current_stream_processor.feeder_task = asyncio.create_task(
+                        self._feed_audio_to_pipe(current_stream_processor)
+                    )
 
-        except asyncio.CancelledError:
+                    # Define the 'after' callback for voice_client.play()
+                    # This callback is crucial for signaling when playback of the current source has finished or errored.
+                    def after_playback_callback(
+                        error: Optional[Exception], played_source_stream_id: str
+                    ):
+                        log_msg = f"PlaybackLoop: 'after' callback triggered for played stream '{played_source_stream_id}'."
+                        if error:  # pragma: no cover
+                            log_msg += f" Error: {error}"
+                        logger.info(log_msg)
+
+                        # Ensure this callback is for the currently active stream processor.
+                        if (
+                            current_stream_processor
+                            and current_stream_processor.stream_id
+                            == played_source_stream_id
+                        ):
+                            current_stream_processor.playback_done_event.set()  # Signal completion
+                        else:  # pragma: no cover
+                            # This might happen if a new stream started very quickly after an old one stopped,
+                            # and a late 'after' callback from the old stream arrives.
+                            logger.warning(
+                                f"PlaybackLoop: 'after' callback for '{played_source_stream_id}' but current processor is for "
+                                f"'{current_stream_processor.stream_id if current_stream_processor else 'None'}'. Event might be stale."
+                            )
+
+                    logger.info(
+                        f"PlaybackLoop: Starting voice_client.play for stream '{current_stream_processor.stream_id}'"
+                    )
+                    voice_client.play(
+                        current_stream_processor.ffmpeg_audio_source,
+                        # Pass the stream_id to the lambda to capture its current value for the callback.
+                        after=lambda e,
+                        sid=current_stream_processor.stream_id: after_playback_callback(
+                            e, sid
+                        ),
+                    )
+
+                    # Wait until the playback_done_event is set (by the 'after' callback).
+                    # This means the current audio source has finished playing or an error occurred.
+                    await current_stream_processor.playback_done_event.wait()
+                    logger.info(
+                        f"PlaybackLoop: Playback done event received for stream '{current_stream_processor.stream_id}'."
+                    )
+
+                    # Playback is done for this source, so clean it up.
+                    await self._cleanup_playback_stream(current_stream_processor)
+                    current_stream_processor = None  # Mark as no longer active
+                    logger.info(
+                        f"PlaybackLoop: Finished processing and cleaning up stream '{target_id_for_new_stream}'."
+                    )
+
+                # If no target stream and no active processor, just idle until next signal.
+                if not self._current_stream_id and not current_stream_processor:
+                    logger.debug(
+                        "PlaybackLoop: No target stream and no active processor. Idling."
+                    )
+
+        except asyncio.CancelledError:  # pragma: no cover
             logger.info("PlaybackLoop: Cancelled.")
-        except Exception as e:
+        except Exception as e:  # pragma: no cover
             logger.error(f"PlaybackLoop: Unhandled error: {e}", exc_info=True)
         finally:
-            logger.info("PlaybackLoop: Exiting.")
-            if active_ffmpeg_process:
-                active_ffmpeg_process.cleanup()
-            if w_pipe_local is not None:  # If loop exited abruptly before feed_ffmpeg closed its end
-                try:
-                    os.close(w_pipe_local)
-                except OSError: # Pipe might already be closed
-                    pass
-            self._playback_control_event.clear()
-            # Final check to ensure _current_stream_id is cleared if it matches the stream
-            # that was being processed when an unhandled exception or cancellation occurred.
-            if current_processing_stream_id is not None and \
-               self._current_stream_id == current_processing_stream_id:
-                self._current_stream_id = None
+            logger.info("PlaybackLoop: Exiting final cleanup.")
+            # Ensure voice client is stopped if it was playing/paused.
+            if voice_client and (
+                voice_client.is_playing() or voice_client.is_paused()
+            ):  # pragma: no cover
+                logger.info(
+                    "PlaybackLoop: Stopping voice_client playback during final exit."
+                )
+                voice_client.stop()
+            # Ensure any active stream processor is cleaned up.
+            if current_stream_processor:  # pragma: no cover
+                logger.info(
+                    f"PlaybackLoop: Cleaning up active stream processor for '{current_stream_processor.stream_id}' during final exit."
+                )
+                # We must ensure its playback_done_event is set if voice_client.stop() didn't trigger 'after' or it timed out.
+                if not current_stream_processor.playback_done_event.is_set():
+                    current_stream_processor.playback_done_event.set()  # Force it to allow cleanup to proceed past await.
+                await self._cleanup_playback_stream(current_stream_processor)
+                current_stream_processor = None
+            self._playback_control_event.clear()  # Clear event on exit

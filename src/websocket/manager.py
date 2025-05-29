@@ -21,7 +21,6 @@ from src.websocket.connection import WebSocketConnection
 from src.websocket.connection_state import ConnectionState
 from src.websocket.events.events import BaseEvent
 
-# Configure logger for this module
 log = get_logger(__name__)
 
 
@@ -49,14 +48,12 @@ class WebSocketManager:
         """
         self._event_handler = event_handler_instance
 
-        # Configure WebSocket connection parameters
         url: str = Config.WS_SERVER_URL
         headers = {
             "Authorization": f"Bearer {Config.OPENAI_API_KEY}",
             "OpenAI-Beta": "realtime=v1",
         }
 
-        # Create the WebSocketConnection instance
         self._connection = WebSocketConnection(
             url=url, headers=headers, message_handler=self._handle_message
         )
@@ -65,10 +62,8 @@ class WebSocketManager:
         """
         Handle a message received from the WebSocket connection.
 
-        This method:
-        1. Parses the JSON message into an event object
-        2. Dispatches the event to the event handler
-        3. Logs any errors that occur during processing
+        Parses the JSON message into an event object, dispatches it to the
+        event handler, and logs any errors during processing.
 
         Args:
             message: The raw message received from the WebSocket
@@ -79,6 +74,8 @@ class WebSocketManager:
             if event:
                 await self._event_handler.dispatch_event(event)
             else:
+                # This case is handled by BaseEvent.from_json logging a warning,
+                # but an additional debug log here can be useful for dropped messages.
                 log.debug(f"Dropping unknown event type: {event_dict.get('type')}")
         except json.JSONDecodeError as e:
             log.error(f"Failed to decode JSON message: {e}")
@@ -109,10 +106,8 @@ class WebSocketManager:
         """
         Ensure that the WebSocket connection is established.
 
-        This convenience method:
-        1. Starts the connection if it's not already started
-        2. Waits for the connection to reach the CONNECTED state
-        3. Returns True if connected successfully, False otherwise
+        Starts the connection if not already started, then waits for it to
+        reach the CONNECTED state.
 
         Args:
             timeout: Maximum time to wait for connection in seconds
@@ -120,15 +115,12 @@ class WebSocketManager:
         Returns:
             bool: True if connected successfully, False otherwise
         """
-        # Start the connection if it's not already connected
         if not self._connection.connected:
             await self.start()
 
-        # If we're already connected, return immediately
-        if self._connection.connected:
+        if self._connection.connected:  # Check again in case start() was instant
             return True
 
-        # Wait for the connection to be established
         log.info("Waiting for WebSocket connection to be established...")
         result = await self._connection.wait_for_state(
             ConnectionState.CONNECTED, timeout
@@ -160,17 +152,13 @@ class WebSocketManager:
             log.debug(f"Sent event: {event.type}")
         except Exception as e:
             log.error(f"Error sending event {event.type}: {e}")
-            # Re-raise to allow caller to handle the error
-            raise
+            raise  # Re-raise to allow caller to handle the error
 
     async def safe_send_event(self, event: BaseEvent, timeout: float = 30.0) -> bool:
         """
         Ensure connection is established and then send an event.
 
-        This convenience method:
-        1. Ensures the WebSocket connection is established
-        2. Sends the event if connected
-        3. Returns True if the event was sent successfully, False otherwise
+        Ensures the WebSocket connection is established before sending the event.
 
         Args:
             event: The event to send to the WebSocket server
@@ -179,12 +167,10 @@ class WebSocketManager:
         Returns:
             bool: True if the event was sent successfully, False otherwise
         """
-        # Ensure the connection is established
         if not await self.ensure_connected(timeout):
             log.error(f"Failed to send event {event.type}: WebSocket not connected")
             return False
 
-        # Send the event
         try:
             await self.send_event(event)
             log.debug(f"Successfully sent event {event.type}")
@@ -235,18 +221,9 @@ class WebSocketManager:
         Returns:
             dict: A dictionary containing health metrics
         """
-        # Get connection metrics from the WebSocketConnection instance
         connection_metrics = await self._connection.get_health_metrics()
-
-        # Add manager-specific metrics
-        manager_metrics = {
-            "manager_type": "WebSocketManager",
-        }
-
-        # Combine metrics
-        metrics = {**connection_metrics, **manager_metrics}
-
-        return metrics
+        manager_metrics = {"manager_type": "WebSocketManager"}
+        return {**connection_metrics, **manager_metrics}
 
     async def wait_for_state(
         self, target_state: ConnectionState, timeout: float = None
