@@ -14,7 +14,7 @@ and provides a consistent interface for all event types.
 
 import json
 from dataclasses import dataclass, asdict
-from typing import Dict, Any
+from typing import Dict, Any, Optional
 
 from src.utils.logger import get_logger
 
@@ -166,3 +166,17 @@ class ResponseAudioDoneEvent(BaseEvent):
 @dataclass
 class ErrorEvent(BaseEvent):
     error: Dict[str, Any]
+
+
+@register_event("response.cancel")
+@dataclass
+class ResponseCancelEvent(BaseEvent):
+    """Event sent by the client to cancel an in-progress response."""
+    response_id: Optional[str] = None # Specific response ID to cancel; if None, server cancels default.
+
+
+@register_event("response.cancelled")
+@dataclass
+class ResponseCancelledEvent(BaseEvent):
+    """Event received from the server confirming a response cancellation."""
+    cancelled_response_id: Optional[str] = None # The ID of the response that was actually cancelled by the server.

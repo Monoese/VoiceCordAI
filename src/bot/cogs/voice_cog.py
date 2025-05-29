@@ -26,6 +26,7 @@ from src.websocket.events.events import (
     InputAudioBufferAppendEvent,
     InputAudioBufferCommitEvent,
     ResponseCreateEvent,
+    ResponseCancelEvent,
 )
 from src.websocket.manager import WebSocketManager
 
@@ -136,6 +137,7 @@ class VoiceCog(commands.Cog):
 
         This listener handles two main reaction scenarios:
         1. 🎙 reaction on standby message - Starts recording if in STANDBY state.
+           If audio is playing, it stops playback and sends a response.cancel event.
         2. ❌ reaction on standby message - Cancels recording if in RECORDING state.
 
         The method ensures the bot is connected to a voice channel for recording
@@ -159,6 +161,32 @@ class VoiceCog(commands.Cog):
                 reaction.emoji == "🎙"
                 and self.bot_state_manager.current_state == BotStateEnum.STANDBY
             ):
+                response_id_to_cancel = None
+                guild = reaction.message.guild
+                if guild and guild.voice_client and guild.voice_client.is_playing():
+                    logger.info(
+                        "User initiated new recording. Stopping current audio playback."
+                    )
+                    # Get the response_id of the stream being played by AudioManager
+                    response_id_to_cancel = self.audio_manager.get_current_playing_response_id()
+                    guild.voice_client.stop() # Stop discord.py audio playback
+
+                # Send response.cancel event to the server
+                cancel_event = ResponseCancelEvent(
+                    event_id=f"event_{uuid.uuid4()}",
+                    type="response.cancel",
+                    response_id=response_id_to_cancel # This can be None if nothing was playing or ID couldn't be parsed
+                )
+                if response_id_to_cancel:
+                    logger.info(f"Sending response.cancel event for response_id: {response_id_to_cancel}.")
+                else:
+                    logger.info("Sending response.cancel event for default in-progress response.")
+                
+                if not await self.websocket_manager.safe_send_event(cancel_event):
+                    logger.error(
+                        "Failed to send response.cancel event. Continuing with recording..."
+                    )
+
                 if await self.bot_state_manager.start_recording(user):
                     # Case 1: Bot is already in a voice channel in this guild
                     if reaction.message.guild and reaction.message.guild.voice_client:

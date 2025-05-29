@@ -53,10 +53,10 @@ class BotState:
         The bot starts in IDLE state with no specific authority user
         and no standby message.
         """
-        self._current_state: BotStateEnum = BotStateEnum.IDLE  # Initial state is IDLE
-        self._authority_user_id: Optional[str] = "anyone"  # Default authority is anyone
-        self._authority_user_name: Optional[str] = "anyone"  # Default authority name
-        self._standby_message: Optional[Message] = None  # No standby message initially
+        self._current_state: BotStateEnum = BotStateEnum.IDLE
+        self._authority_user_id: Optional[str] = "anyone"
+        self._authority_user_name: Optional[str] = "anyone"
+        self._standby_message: Optional[Message] = None
 
     @property
     def current_state(self) -> BotStateEnum:
@@ -117,7 +117,7 @@ class BotState:
             f"### 🔄 How to control the bot:\n"
             f"1. **Start Recording**: React to this message with 🎙 to start recording.\n"
             f"2. **Finish Recording**: Remove your 🎙 reaction to finish recording.\n"
-            f"4. **End Session**: Use `{Config.COMMAND_PREFIX}-listen` to end session.\n"
+            f"3. **End Session**: Use `{Config.COMMAND_PREFIX}disconnect` to end the session.\n"
             f"---\n"
             f"### 🛠 Current State:\n"
             f"- **State**: `{self._current_state.value}`\n"
@@ -141,14 +141,11 @@ class BotState:
         Returns:
             bool: True if transition was successful, False if bot was not in IDLE state
         """
-        # Only allow transition from IDLE state
-        if self._current_state != BotStateEnum.IDLE:
+        if self._current_state != BotStateEnum.IDLE: # Only allow transition from IDLE state
             return False
 
-        # Transition to STANDBY state
         self._current_state = BotStateEnum.STANDBY
 
-        # Create and send the standby message with controls
         self._standby_message = await ctx.send(self.get_message_content())
         await self._standby_message.add_reaction("🎙")
         return True
@@ -168,18 +165,14 @@ class BotState:
         Returns:
             bool: True if transition was successful, False if bot was not in STANDBY state
         """
-        # Only allow transition from STANDBY state
-        if self._current_state != BotStateEnum.STANDBY:
+        if self._current_state != BotStateEnum.STANDBY: # Only allow transition from STANDBY state
             return False
 
-        # Transition to RECORDING state
         self._current_state = BotStateEnum.RECORDING
 
-        # Set the authority user
         self.authority_user_id = user.id
         self._authority_user_name = user.name
 
-        # Update the message to reflect the new state
         await self._update_message()
         return True
 
@@ -195,18 +188,14 @@ class BotState:
         Returns:
             bool: True if transition was successful, False if bot was not in RECORDING state
         """
-        # Only allow transition from RECORDING state
-        if self._current_state != BotStateEnum.RECORDING:
+        if self._current_state != BotStateEnum.RECORDING: # Only allow transition from RECORDING state
             return False
 
-        # Transition back to STANDBY state
         self._current_state = BotStateEnum.STANDBY
 
-        # Reset authority to "anyone"
         self.authority_user_id = "anyone"
         self._authority_user_name = "anyone"
 
-        # Update the message to reflect the new state
         await self._update_message()
         return True
 
@@ -222,16 +211,13 @@ class BotState:
         Returns:
             bool: True if transition was successful, False if bot was already in IDLE state
         """
-        # Don't do anything if already in IDLE state
-        if self._current_state == BotStateEnum.IDLE:
+        if self._current_state == BotStateEnum.IDLE: # Don't do anything if already in IDLE state
             return False
 
-        # Delete the standby message if it exists
-        if self._standby_message:
+        if self._standby_message: # Delete the standby message if it exists
             await self._standby_message.delete()
             self._standby_message = None
 
-        # Transition to IDLE state
         self._current_state = BotStateEnum.IDLE
         self.authority_user_id = "anyone"
         return True
