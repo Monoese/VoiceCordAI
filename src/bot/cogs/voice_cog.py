@@ -127,36 +127,6 @@ class VoiceCog(commands.Cog):
             logger.error("Failed to send response create event")
             return
 
-    @commands.command(name="listen")
-    async def listen_command(self, ctx: commands.Context) -> None:
-        """
-        Command to put the bot in standby mode, ready to listen for voice input.
-
-        This command transitions the bot from IDLE to STANDBY state if possible.
-        In standby mode, the bot displays a message with reaction controls for recording.
-
-        Args:
-            ctx: The command context containing information about the invocation
-        """
-        if await self.bot_state_manager.initialize_standby(ctx):
-            return
-        await ctx.send("Bot is already active in another state.")
-
-    @commands.command(name="-listen")
-    async def stop_listen_command(self, ctx: commands.Context) -> None:
-        """
-        Command to stop the bot from listening and return it to idle state.
-
-        This command transitions the bot from any active state back to IDLE state.
-        It removes the standby message and cleans up any active resources.
-
-        Args:
-            ctx: The command context containing information about the invocation
-        """
-        if await self.bot_state_manager.reset_to_idle():
-            return
-        await ctx.send("Bot is already in idle state.")
-
     @commands.Cog.listener()
     async def on_reaction_add(
         self, reaction: discord.Reaction, user: discord.User
@@ -165,11 +135,11 @@ class VoiceCog(commands.Cog):
         Event listener for when a reaction is added to a message.
 
         This listener handles two main reaction scenarios:
-        1. 🎙 reaction on standby message - Starts recording if in STANDBY state
-        2. ❌ reaction on standby message - Cancels recording if in RECORDING state
+        1. 🎙 reaction on standby message - Starts recording if in STANDBY state.
+        2. ❌ reaction on standby message - Cancels recording if in RECORDING state.
 
-        The method handles voice client setup, connection to voice channels,
-        and appropriate error handling for each scenario.
+        The method ensures the bot is connected to a voice channel for recording
+        and handles appropriate error scenarios.
 
         Args:
             reaction: The reaction that was added
@@ -330,12 +300,13 @@ class VoiceCog(commands.Cog):
     @commands.command(name="connect")
     async def connect_command(self, ctx: commands.Context) -> None:
         """
-        Command to connect the bot to a voice channel and start the WebSocket connection.
+        Command to connect the bot to a voice channel, establish WebSocket connection, and enter standby mode.
 
         This command:
-        1. Connects to the user's current voice channel or moves to it if already connected elsewhere
-        2. Starts the audio playback loop for handling responses
-        3. Establishes a WebSocket connection for external service communication
+        1. Connects to the user's current voice channel (or moves if already connected elsewhere).
+        2. Ensures the audio playback loop is running for handling responses.
+        3. Establishes a WebSocket connection if not already active.
+        4. Transitions the bot to STANDBY state, ready for voice input.
 
         Args:
             ctx: The command context containing information about the invocation
@@ -363,25 +334,35 @@ class VoiceCog(commands.Cog):
                     await ctx.send(
                         "Failed to establish WebSocket connection within timeout"
                     )
+                    return # Don't proceed to initialize standby if WebSocket connection failed
             except Exception as e:
                 await ctx.send(f"Failed to connect to WebSocket server: {e}")
+                return # Don't proceed to initialize standby if WebSocket connection failed
+
+        # Initialize standby mode
+        if not await self.bot_state_manager.initialize_standby(ctx):
+            await ctx.send("Bot is already active in another state, but connection steps were performed if applicable.")
 
     @commands.command(name="disconnect")
     async def disconnect_command(self, ctx: commands.Context) -> None:
         """
-        Command to disconnect the bot from voice channel and stop WebSocket connection.
+        Command to disconnect the bot from voice channel, stop WebSocket connection, and return to idle state.
 
         This command:
-        1. Stops any active listening or recording
-        2. Cancels the audio playback task if running
-        3. Disconnects from the voice channel
-        4. Stops the WebSocket connection
+        1. Resets the bot to IDLE state, stopping any active recording/listening.
+        2. Disconnects from the voice channel, stopping audio playback.
+        3. Stops the WebSocket connection.
 
         Args:
             ctx: The command context containing information about the invocation
         """
+        # Reset bot state to idle first
+        if not await self.bot_state_manager.reset_to_idle():
+            await ctx.send("Bot was already in idle state or could not be reset.")
+
         if not await self.voice_connection.disconnect():
             await ctx.send("Bot is not in a voice channel.")
+            # If not in a voice channel, it might still be connected to WebSocket
 
         # Stop WebSocket connection if connected
         if self.websocket_manager.connected:

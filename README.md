@@ -87,10 +87,8 @@ Before you start, make sure you have:
    ```
 
 2. **Available Commands**
-   - `/connect` - Join your current voice channel
-   - `/disconnect` - Leave the voice channel
-   - `/listen` - Start a listening session
-   - `/-listen` - End the listening session
+   - `/connect` - Joins your current voice channel, connects to the AI service, and prepares for voice interaction (standby mode).
+   - `/disconnect` - Leaves the voice channel, disconnects from the AI service, and resets the bot to an idle state.
 
 3. **Voice Controls**
    - Click 🎙️ to start recording
