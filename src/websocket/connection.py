@@ -59,7 +59,6 @@ class WebSocketConnection:
 
         self._websocket: Optional[websockets.ClientConnection] = None
         self._receive_task: Optional[asyncio.Task] = None
-        self._send_task: Optional[asyncio.Task] = None
         self._connection_task: Optional[asyncio.Task] = None
 
         self._connection_active = (
@@ -94,9 +93,9 @@ class WebSocketConnection:
 
                 # Reset reconnect attempts when successfully connected
                 if new_state == ConnectionState.CONNECTED:
-                    self._reconnect_attempts = 0  # Reset on successful connection
+                    self._reconnect_attempts = 0
                 elif new_state == ConnectionState.RECONNECTING:
-                    self._reconnect_attempts += 1  # Increment on attempt to reconnect
+                    self._reconnect_attempts += 1
 
                 self._state_condition.notify_all()  # Notify waiters of state change
 
@@ -126,22 +125,17 @@ class WebSocketConnection:
         if self._websocket:
             await self._websocket.close()
 
-        for task in (self._receive_task, self._send_task, self._connection_task):
+        for task in (self._receive_task, self._connection_task):
             if task and not task.done():
                 task.cancel()
 
         await asyncio.gather(
-            *(
-                t
-                for t in (self._receive_task, self._send_task, self._connection_task)
-                if t
-            ),
+            *(t for t in (self._receive_task, self._connection_task) if t),
             return_exceptions=True,
         )
 
         self._websocket = None
         self._receive_task = None
-        self._send_task = None
         self._connection_task = None
 
         await self._set_state(ConnectionState.DISCONNECTED)
