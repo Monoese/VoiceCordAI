@@ -78,11 +78,13 @@ class WebSocketEventHandler:
 
     async def _handle_session_updated(self, event: SessionUpdatedEvent) -> None:
         """Handles session updated events from the WebSocket."""
-        logger.info(f"Handling event: {event.type}")
+        # TODO: Implement logic for session.updated event.
+        logger.info(f"Placeholder handler for event: {event.type} - {event}")
 
     async def _handle_session_created(self, event: SessionCreatedEvent) -> None:
         """Handles session created events from the WebSocket."""
-        logger.info(f"Handling event: {event.type}")
+        # TODO: Implement logic for session.created event.
+        logger.info(f"Placeholder handler for event: {event.type} - {event}")
 
     async def _handle_response_audio_delta(
         self, event: ResponseAudioDeltaEvent
@@ -93,7 +95,6 @@ class WebSocketEventHandler:
 
         if self._active_response_stream_id != current_event_stream_id:
             # This delta belongs to a new audio stream (e.g., new item_id or new response_id).
-            # Signal AudioManager to prepare for this new stream.
             self._active_response_stream_id = current_event_stream_id
             logger.info(
                 f"EventHandler: Starting new audio stream '{self._active_response_stream_id}' for {event.type}."
@@ -108,6 +109,7 @@ class WebSocketEventHandler:
         await self.audio_manager.add_audio_chunk(decoded_audio)
 
     async def _handle_response_audio_done(self, event: ResponseAudioDoneEvent) -> None:
+        """Handles the completion of an audio stream for a response."""
         event_stream_id = f"{event.response_id}-{event.item_id}"
         logger.info(
             f"EventHandler: Received audio done for stream '{event_stream_id}' (Current active: '{self._active_response_stream_id}')"
@@ -115,7 +117,7 @@ class WebSocketEventHandler:
 
         if self._active_response_stream_id == event_stream_id:
             # This 'done' message corresponds to the stream we are currently processing.
-            await self.audio_manager.end_audio_stream()  # Signal EOS to AudioManager
+            await self.audio_manager.end_audio_stream()
             self._active_response_stream_id = (
                 None  # Reset, ready for the next audio stream
             )
