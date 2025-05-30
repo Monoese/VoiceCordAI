@@ -28,15 +28,10 @@ class WebSocketManager:
     """
     Manages WebSocket events and coordinates with the connection layer.
 
-    This class handles:
-    - Coordinating with WebSocketConnection for low-level connection management
-    - Sending events to the WebSocket server
-    - Receiving and processing events from the WebSocket server
-    - Serializing events to JSON for transmission
-    - Deserializing JSON messages to event objects
-
-    The manager provides a simple interface for other components to send events
-    without having to worry about connection state or reconnection logic.
+    This class provides a simplified interface for sending and receiving WebSocket
+    events, abstracting away the complexities of direct connection management
+    which are handled by the WebSocketConnection class. It ensures that events
+    are properly serialized/deserialized and dispatched to the appropriate handler.
     """
 
     def __init__(self, event_handler_instance) -> None:
@@ -115,25 +110,36 @@ class WebSocketManager:
         Returns:
             bool: True if connected successfully, False otherwise
         """
-        if not self._connection.connected:
-            await self.start()
-
-        if self._connection.connected:  # Check again in case start() was instant
+        log.debug("ensure_connected: Checking WebSocket connection status.")
+        if self._connection.connected:
+            log.debug("ensure_connected: Connection is already established.")
             return True
 
-        log.info("Waiting for WebSocket connection to be established...")
-        result = await self._connection.wait_for_state(
+        log.info("ensure_connected: Connection not established. Attempting to start...")
+        await self.start()
+
+        if self._connection.connected:
+            log.info(
+                "ensure_connected: Connection established successfully after start()."
+            )
+            return True
+
+        log.info(
+            f"ensure_connected: Waiting up to {timeout}s for connection to be established..."
+        )
+        connected_after_wait = await self._connection.wait_for_state(
             ConnectionState.CONNECTED, timeout
         )
 
-        if result:
-            log.info("WebSocket connection established successfully")
+        if connected_after_wait:
+            log.info(
+                "ensure_connected: Connection successfully established after waiting."
+            )
         else:
             log.warning(
-                f"Failed to establish WebSocket connection within {timeout}s timeout"
+                f"ensure_connected: Failed to establish connection within {timeout}s timeout."
             )
-
-        return result
+        return connected_after_wait
 
     async def send_event(self, event: BaseEvent) -> None:
         """
@@ -157,8 +163,6 @@ class WebSocketManager:
     async def safe_send_event(self, event: BaseEvent, timeout: float = 30.0) -> bool:
         """
         Ensure connection is established and then send an event.
-
-        Ensures the WebSocket connection is established before sending the event.
 
         Args:
             event: The event to send to the WebSocket server
