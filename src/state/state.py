@@ -23,15 +23,16 @@ class BotStateEnum(Enum):
     """
     Enumeration of possible bot states.
 
-    States:
-        IDLE: Bot is not actively listening or processing voice
-        STANDBY: Bot is ready to start recording when triggered
-        RECORDING: Bot is actively recording audio from a user
+    - IDLE: Bot is not actively listening or processing voice.
+    - STANDBY: Bot is ready to start recording when triggered.
+    - RECORDING: Bot is actively recording audio from a user.
+    - CONNECTION_ERROR: Bot has encountered a connection issue and may not be fully functional.
     """
 
     IDLE = "idle"
     STANDBY = "standby"
     RECORDING = "recording"
+    CONNECTION_ERROR = "connection_error"
 
 
 class BotState:
@@ -39,7 +40,7 @@ class BotState:
     Manages the state and permissions of the Discord bot.
 
     This class:
-    - Tracks the current state of the bot (idle, standby, recording)
+    - Tracks the current state of the bot (idle, standby, recording, connection_error)
     - Manages state transitions with appropriate validation
     - Tracks which user has authority to control the bot
     - Maintains the standby message for reaction-based controls
@@ -66,7 +67,7 @@ class BotState:
         Get the current state of the bot.
 
         Returns:
-            BotStateEnum: The current state (IDLE, STANDBY, or RECORDING)
+            BotStateEnum: The current state (IDLE, STANDBY, RECORDING, or CONNECTION_ERROR)
         """
         return self._current_state
 
@@ -105,7 +106,7 @@ class BotState:
         Generate the standby message content based on the current state.
 
         This method creates a formatted message that displays:
-        - The current bot mode (IDLE, STANDBY, or RECORDING)
+        - The current bot mode (IDLE, STANDBY, RECORDING, or CONNECTION_ERROR)
         - Instructions for using the bot's reaction controls
         - The current recording status
         - Which user has authority to control the bot
@@ -113,6 +114,20 @@ class BotState:
         Returns:
             str: Formatted message content for the standby message
         """
+        if self._current_state == BotStateEnum.CONNECTION_ERROR:
+            return (
+                f"**⚠️ Voice Chat Session - CONNECTION ERROR **\n\n"
+                f"---\n"
+                f"### 🛠 Current State:\n"
+                f"- **State**: `{self._current_state.value}`\n"
+                f"- **Details**: The bot has encountered a connection issue (voice or services) and may not be fully functional.\n"
+                f"- **Action**: Please try `{Config.COMMAND_PREFIX}disconnect` and then `{Config.COMMAND_PREFIX}connect` again.\n"
+                f"If the issue persists, contact an administrator.\n"
+                f"---\n"
+                f"### 🧑 Authority User:\n"
+                f"> `{self._authority_user_name}` can control the recording actions (if applicable)."
+            )
+
         return (
             f"**🎙 Voice Chat Session - **\n\n"
             f"---\n"
@@ -265,3 +280,54 @@ class BotState:
             bool: True if the user is authorized, False otherwise
         """
         return self.authority_user_id == "anyone" or user.id == self.authority_user_id
+
+    async def enter_connection_error_state(self) -> bool:
+        """
+        Transition the bot to the CONNECTION_ERROR state.
+
+        This method:
+        1. Transitions the bot to CONNECTION_ERROR state.
+        2. Resets authority user.
+        3. Updates the standby message if it exists.
+
+        Returns:
+            bool: True if transition was successful, False if bot was already in CONNECTION_ERROR state.
+        """
+        if self._current_state == BotStateEnum.CONNECTION_ERROR:
+            return False  # Already in the error state
+
+        self._current_state = BotStateEnum.CONNECTION_ERROR
+        self.authority_user_id = "anyone"  # Reset authority
+        self._authority_user_name = "anyone"
+
+        if self._standby_message:  # Update UI if a standby message exists
+            await self._update_message()
+        return True
+
+    async def recover_to_standby(self) -> bool:
+        """
+        Attempt to recover from CONNECTION_ERROR state back to STANDBY.
+
+        This method should be called when external connections are confirmed to be restored.
+        It transitions the state to STANDBY and updates the UI if possible.
+
+        Returns:
+            bool: True if recovery to STANDBY was successful, False otherwise
+                  (e.g., not in CONNECTION_ERROR state, or standby message missing).
+        """
+        if self._current_state != BotStateEnum.CONNECTION_ERROR:
+            return False  # Can only recover from connection error state
+
+        if not self._standby_message:
+            # If the standby message doesn't exist (e.g., error occurred before it was created,
+            # or it was somehow deleted), we cannot fully recover to standby UI here.
+            # This recovery path assumes the standby message context is still valid.
+            return False
+
+        self._current_state = BotStateEnum.STANDBY
+        self.authority_user_id = "anyone"
+        self._authority_user_name = "anyone"
+        await (
+            self._update_message()
+        )  # Update the existing standby message to reflect STANDBY state
+        return True
