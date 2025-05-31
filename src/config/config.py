@@ -37,25 +37,25 @@ class Config:
 
     # Audio Processing Settings
     SAMPLE_WIDTH: int = 2  # Sample width in bytes (e.g., 2 for 16-bit audio)
-    DISCORD_FRAME_RATE: int = 96000  # Frame rate of audio from Discord (typically 48kHz stereo, so 96k samples/sec)
-    TARGET_FRAME_RATE: int = (
-        24000  # Target frame rate for audio processing (e.g., by OpenAI)
+    FFMPEG_PCM_FORMAT: str = (
+        "s16le"  # FFmpeg format string for PCM data (signed 16-bit little-endian)
     )
-    OUTPUT_FRAME_RATE: int = 48000  # Frame rate for audio playback to Discord
-    CHANNELS: int = 1  # Number of audio channels for processing (1 for mono)
-    OUTPUT_CHANNELS: int = 2  # Number of audio channels for playback (2 for stereo)
+
+    # Discord Audio Format (for audio received from and sent to Discord)
+    DISCORD_AUDIO_FRAME_RATE: int = 48000  # Samples per second, per channel
+    DISCORD_AUDIO_CHANNELS: int = 2  # Number of audio channels (e.g., 2 for stereo)
+
+    # Processing Audio Format (for internal processing, e.g., by OpenAI)
+    PROCESSING_AUDIO_FRAME_RATE: int = 24000  # Samples per second, per channel
+    PROCESSING_AUDIO_CHANNELS: int = 1  # Number of audio channels (e.g., 1 for mono)
 
     # Logging Configuration
-    LOG_LEVEL: Union[int, str] = os.getenv(
-        "LOG_LEVEL", logging.INFO
-    )  # General log level for file logs
-    LOG_CONSOLE_LEVEL: Union[int, str] = os.getenv(
-        "LOG_CONSOLE_LEVEL", logging.INFO
-    )  # Log level for console output
-    LOG_MAX_SIZE: int = int(
-        os.getenv("LOG_MAX_SIZE", 5 * 1024 * 1024)
+    LOG_LEVEL: Union[int, str] = logging.INFO  # General log level for file logs
+    LOG_CONSOLE_LEVEL: Union[int, str] = logging.INFO  # Log level for console output
+    LOG_MAX_SIZE: int = (
+        5 * 1024 * 1024
     )  # Max size of a log file before rotation (in bytes)
-    LOG_BACKUP_COUNT: int = int(os.getenv("LOG_BACKUP_COUNT", 3))
+    LOG_BACKUP_COUNT: int = 3  # Number of backup log files to keep
 
     @classmethod
     def validate(cls) -> None:

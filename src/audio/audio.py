@@ -7,6 +7,7 @@ from dataclasses import dataclass, field
 from discord import FFmpegPCMAudio, User
 from discord.ext import voice_recv
 
+from src.config.config import Config
 from src.utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -70,8 +71,8 @@ class AudioManager:
         def __init__(self) -> None:
             """Initialize the audio sink with empty buffer and counters."""
             super().__init__()
-            self.audio_data: bytearray = bytearray()  # Buffer for raw PCM audio data
-            self.total_bytes: int = 0  # Total bytes written to this sink instance
+            self.audio_data: bytearray = bytearray()
+            self.total_bytes: int = 0
             logger.debug("New audio sink initialized")
 
         def wants_opus(self) -> bool:
@@ -152,20 +153,24 @@ class AudioManager:
             "-loglevel",
             "error",
             "-f",
-            "s16le",
+            Config.FFMPEG_PCM_FORMAT,  # Input format
             "-ar",
-            "48000",
+            str(Config.DISCORD_AUDIO_FRAME_RATE),  # Input sample rate from Discord
             "-ac",
-            "2",
+            str(Config.DISCORD_AUDIO_CHANNELS),  # Input channels from Discord
             "-i",
-            "pipe:0",
+            "pipe:0",  # Input from stdin pipe
             "-f",
-            "s16le",
+            Config.FFMPEG_PCM_FORMAT,  # Output format
             "-ar",
-            "24000",
+            str(
+                Config.PROCESSING_AUDIO_FRAME_RATE
+            ),  # Output sample rate for processing
             "-ac",
-            "1",
-            "pipe:1",
+            str(
+                Config.PROCESSING_AUDIO_CHANNELS
+            ),  # Output channels for processing (mono)
+            "pipe:1",  # Output to stdout pipe
         ]
         proc = await asyncio.create_subprocess_exec(
             *cmd,
@@ -264,17 +269,17 @@ class AudioManager:
     def _prepare_new_playback_stream(self, stream_id: str) -> _PlaybackStream:
         """Prepares OS pipes and FFmpegPCMAudio source for a new playback stream."""
         logger.debug(f"Preparing playback resources for stream '{stream_id}'")
-        r_pipe, w_pipe = os.pipe()  # Create a new pipe pair for this stream
+        r_pipe, w_pipe = os.pipe()
 
         # FFmpegPCMAudio will read from the read-end of the pipe (r_pipe).
         # The _feed_audio_to_pipe task will write to the write-end (w_pipe).
         audio_source = FFmpegPCMAudio(
             os.fdopen(r_pipe, "rb"),  # Source for FFmpeg is the read-end of the pipe
-            pipe=True,  # Indicates that the source is a pipe
-            # FFmpeg input options: raw PCM, 16-bit little-endian, 24kHz, mono
-            before_options="-f s16le -ar 24000 -ac 1",
-            # FFmpeg output options (for Discord): 48kHz, stereo (Discord prefers stereo)
-            options="-ar 48000 -ac 2",
+            pipe=True,
+            # FFmpeg input options: raw PCM, from PROCESSING format
+            before_options=f"-f {Config.FFMPEG_PCM_FORMAT} -ar {Config.PROCESSING_AUDIO_FRAME_RATE} -ac {Config.PROCESSING_AUDIO_CHANNELS}",
+            # FFmpeg output options (for Discord): to DISCORD format
+            options=f"-ar {Config.DISCORD_AUDIO_FRAME_RATE} -ac {Config.DISCORD_AUDIO_CHANNELS}",
         )
         return _PlaybackStream(
             stream_id=stream_id,
@@ -357,16 +362,16 @@ class AudioManager:
                         f"Feeder for '{feeder_stream_id}': Broken pipe. FFmpeg likely closed. Stopping feeder."
                     )
                     self.audio_chunk_queue.task_done()
-                    break  # Exit loop
+                    break
                 except Exception as e:  # pragma: no cover
                     logger.error(
                         f"Feeder for '{feeder_stream_id}': Error writing/flushing: {e}",
                         exc_info=True,
                     )
                     self.audio_chunk_queue.task_done()
-                    break  # Exit loop on other errors
+                    break
 
-                self.audio_chunk_queue.task_done()  # Mark item as processed
+                self.audio_chunk_queue.task_done()
 
         except asyncio.CancelledError:
             logger.info(f"Feeder for '{feeder_stream_id}': Cancelled.")
@@ -449,10 +454,8 @@ class AudioManager:
         current_stream_processor: Optional[_PlaybackStream] = None
         try:
             while True:
-                await (
-                    self._playback_control_event.wait()
-                )  # Wait for a signal to do work
-                self._playback_control_event.clear()  # Reset event for next signal
+                await self._playback_control_event.wait()
+                self._playback_control_event.clear()
 
                 logger.debug(
                     f"PlaybackLoop: Awakened. Target stream: '{self._current_stream_id}'. "
