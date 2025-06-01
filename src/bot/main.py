@@ -23,12 +23,11 @@ from src.utils.logger import get_logger
 from src.websocket.event_handler import WebSocketEventHandler
 from src.websocket.manager import WebSocketManager
 
-# Configure discord.py's internal logging to use a colored console output.
-# level=logging.INFO sets the level for discord.py's own loggers.
+# Configure discord.py's internal logging.
 # root=False prevents it from reconfiguring the root logger we set up in src.utils.logger.
 discord.utils.setup_logging(
     level=Config.LOG_CONSOLE_LEVEL, root=False
-)  # Use configured console level
+)  # Use configured console level for discord.py's loggers.
 
 logger = get_logger(__name__)
 
@@ -61,7 +60,6 @@ async def main():
     The function uses an async context manager to ensure proper cleanup when the bot stops.
     """
     async with bot:
-        # Instantiate and add the VoiceCog, passing all necessary dependencies.
         voice_cog_instance = VoiceCog(
             bot=bot,
             audio_manager=audio_manager,
@@ -72,7 +70,7 @@ async def main():
         logger.info("VoiceCog loaded and added to the bot.")
 
         logger.info("Starting Discord bot...")
-        await bot.start(Config.DISCORD_TOKEN)  # Connects to Discord
+        await bot.start(Config.DISCORD_TOKEN)
 
 
 if __name__ == "__main__":
