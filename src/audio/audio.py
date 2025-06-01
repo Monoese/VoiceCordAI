@@ -95,6 +95,8 @@ class AudioManager:
                 user: The Discord user who sent the audio
                 data: The audio data packet containing PCM data (discord.VoiceReceivePacket)
             """
+            # data.pcm might be None or empty if silence is received from Discord
+            # or during specific discord.py internal states.
             if data.pcm:
                 self.audio_data.extend(data.pcm)  # Append new PCM data
                 self.total_bytes += len(data.pcm)
@@ -226,7 +228,7 @@ class AudioManager:
             # The playback_loop, when it awakens, will see the new _current_stream_id
             # and transition by cleaning up the old stream processor and starting a new one.
 
-        self._current_stream_id = stream_id  # Update to the new target stream ID
+        self._current_stream_id = stream_id
         logger.info(
             f"AudioManager: New target audio stream set to '{self._current_stream_id}'"
         )
@@ -293,9 +295,7 @@ class AudioManager:
         """Task to feed audio chunks from the queue to the FFmpeg pipe for a given stream."""
         writer_fp = None
         loop = asyncio.get_running_loop()
-        feeder_stream_id = (
-            stream.stream_id
-        )  # The specific stream this feeder is responsible for
+        feeder_stream_id = stream.stream_id
         logger.info(f"Feeder task started for stream '{feeder_stream_id}'.")
 
         try:
@@ -303,7 +303,6 @@ class AudioManager:
             writer_fp = os.fdopen(stream.pipe_write_fd, "wb")
             while True:
                 try:
-                    # Get an item (audio chunk or EOS marker) from the shared queue
                     item_stream_id, item_data = await self.audio_chunk_queue.get()
                 except asyncio.CancelledError:
                     logger.info(
@@ -311,7 +310,6 @@ class AudioManager:
                     )
                     raise  # Propagate cancellation
 
-                # This feeder should only process items intended for its specific stream_id.
                 if item_stream_id != feeder_stream_id:
                     logger.warning(
                         f"Feeder for '{feeder_stream_id}': Got item for different stream '{item_stream_id}'. Discarding."
@@ -432,7 +430,6 @@ class AudioManager:
         # - stream_to_cleanup.pipe_read_fd is closed by ffmpeg_audio_source.cleanup().
         # Explicit os.close() calls here would be redundant and could cause errors if FDs are already closed.
 
-        # 3. If the cleaned-up stream was the globally current one, clear it.
         if self._current_stream_id == stream_id:
             logger.info(
                 f"AudioManager: Cleared _current_stream_id '{self._current_stream_id}' as its playback and cleanup finished."
@@ -463,10 +460,10 @@ class AudioManager:
                 )
 
                 # --- Phase 1: Stop/Transition Current Stream ---
-                # If there's an active stream processor, check if it needs to be stopped.
-                # This happens if:
-                #   a) The global target stream (_current_stream_id) is now None (signaling stop all).
-                #   b) The global target stream (_current_stream_id) has changed to a different ID.
+                # This phase handles the graceful shutdown of the currently active audio stream processor.
+                # Stopping the voice_client (voice_client.stop()) is key, as it triggers the 'after' callback
+                # associated with the FFmpegPCMAudioSource. This callback, in turn, signals
+                # current_stream_processor.playback_done_event, facilitating an orderly resource cleanup.
                 if current_stream_processor:
                     processor_id = current_stream_processor.stream_id
                     global_target_id = self._current_stream_id
@@ -501,14 +498,12 @@ class AudioManager:
 
                         # Now, perform full cleanup of the stream processor.
                         await self._cleanup_playback_stream(current_stream_processor)
-                        current_stream_processor = None  # Mark as no longer active
+                        current_stream_processor = None
                         logger.info(
                             f"PlaybackLoop: Finished stopping and cleaning up processor for '{processor_id}'."
                         )
 
                 # --- Phase 2: Start New Stream ---
-                # If there's a global target stream (_current_stream_id) and no stream is currently being processed,
-                # start a new stream processor for this target.
                 if self._current_stream_id and not current_stream_processor:
                     target_id_for_new_stream = self._current_stream_id
                     logger.info(
@@ -519,7 +514,6 @@ class AudioManager:
                         target_id_for_new_stream
                     )
 
-                    # Start the feeder task for this new stream.
                     current_stream_processor.feeder_task = asyncio.create_task(
                         self._feed_audio_to_pipe(current_stream_processor)
                     )
@@ -540,7 +534,7 @@ class AudioManager:
                             and current_stream_processor.stream_id
                             == played_source_stream_id
                         ):
-                            current_stream_processor.playback_done_event.set()  # Signal completion
+                            current_stream_processor.playback_done_event.set()
                         else:  # pragma: no cover
                             # This might happen if a new stream started very quickly after an old one stopped,
                             # and a late 'after' callback from the old stream arrives.
@@ -570,12 +564,11 @@ class AudioManager:
 
                     # Playback is done for this source, so clean it up.
                     await self._cleanup_playback_stream(current_stream_processor)
-                    current_stream_processor = None  # Mark as no longer active
+                    current_stream_processor = None
                     logger.info(
                         f"PlaybackLoop: Finished processing and cleaning up stream '{target_id_for_new_stream}'."
                     )
 
-                # If no target stream and no active processor, just idle until next signal.
                 if not self._current_stream_id and not current_stream_processor:
                     logger.debug(
                         "PlaybackLoop: No target stream and no active processor. Idling."
@@ -602,7 +595,11 @@ class AudioManager:
                 )
                 # We must ensure its playback_done_event is set if voice_client.stop() didn't trigger 'after' or it timed out.
                 if not current_stream_processor.playback_done_event.is_set():
-                    current_stream_processor.playback_done_event.set()  # Force it to allow cleanup to proceed past await.
+                    # Force-set playback_done_event if not already set (e.g., if the 'after' callback
+                    # didn't run due to abrupt termination or a timeout while waiting for it).
+                    # This ensures _cleanup_playback_stream, which might await this event,
+                    # can proceed without deadlocking during final cleanup.
+                    current_stream_processor.playback_done_event.set()
                 await self._cleanup_playback_stream(current_stream_processor)
                 current_stream_processor = None
-            self._playback_control_event.clear()  # Clear event on exit
+            self._playback_control_event.clear()
