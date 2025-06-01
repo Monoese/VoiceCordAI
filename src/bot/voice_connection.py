@@ -12,7 +12,7 @@ import asyncio
 from typing import Optional
 
 import discord
-from discord.ext import voice_recv
+from discord.ext import commands, voice_recv
 
 from src.audio.audio import AudioManager
 from src.utils.logger import get_logger
@@ -33,7 +33,7 @@ class VoiceConnectionManager:
 
     def __init__(
         self,
-        bot,
+        bot: commands.Bot,
         audio_manager: AudioManager,
     ):
         """
@@ -61,12 +61,9 @@ class VoiceConnectionManager:
         try:
             if self.voice_client and self.voice_client.is_connected():
                 if self.voice_client.channel != voice_channel:
-                    await self.voice_client.move_to(
-                        voice_channel
-                    )  # Move if in a different channel
+                    await self.voice_client.move_to(voice_channel)
                     logger.info(f"Moved to voice channel: {voice_channel.name}")
             else:
-                # Establish a new connection
                 self.voice_client = await voice_channel.connect(
                     cls=voice_recv.VoiceRecvClient  # Use custom client for receiving audio
                 )
@@ -116,10 +113,12 @@ class VoiceConnectionManager:
                 finally:
                     self._playback_task = None
 
-            await self.voice_client.disconnect()  # Disconnect from the voice channel
-            logger.info(
-                f"Disconnected from voice channel: {self.voice_client.channel.name if self.voice_client.channel else 'Unknown'}"
-            )
+            channel_name = "Unknown"
+            if self.voice_client and self.voice_client.channel:
+                channel_name = self.voice_client.channel.name
+
+            await self.voice_client.disconnect()
+            logger.info(f"Disconnected from voice channel: {channel_name}")
             self.voice_client = None
             return True
         except Exception as e:
@@ -169,7 +168,7 @@ class VoiceConnectionManager:
             pcm_data = bytes(
                 self.voice_client.sink.audio_data
             )  # Retrieve captured audio
-            self.voice_client.stop_listening()  # Stop the listening process
+            self.voice_client.stop_listening()
             logger.info(
                 f"Stopped recording. Retrieved {len(pcm_data)} bytes of audio data."
             )
