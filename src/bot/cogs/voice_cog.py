@@ -166,7 +166,6 @@ class VoiceCog(commands.Cog):
         Args:
             base64_audio: Base64-encoded audio data to send to the server
         """
-        # 1. Append audio data
         append_event = InputAudioBufferAppendEvent(
             event_id=f"event_{uuid.uuid4()}",
             type="input_audio_buffer.append",
@@ -176,7 +175,6 @@ class VoiceCog(commands.Cog):
             logger.error("Failed to send audio append event")
             return
 
-        # 2. Commit audio buffer
         commit_event = InputAudioBufferCommitEvent(
             event_id=f"event_{uuid.uuid4()}",
             type="input_audio_buffer.commit",
@@ -185,7 +183,6 @@ class VoiceCog(commands.Cog):
             logger.error("Failed to send audio commit event")
             return
 
-        # 3. Request response
         response_create_event = ResponseCreateEvent(
             event_id=f"event_{uuid.uuid4()}",
             type="response.create",
@@ -193,6 +190,72 @@ class VoiceCog(commands.Cog):
         if not await self.websocket_manager.safe_send_event(response_create_event):
             logger.error("Failed to send response create event")
             # No return here, as previous events might have succeeded.
+
+    async def _establish_voice_and_start_recording(
+        self, reaction: discord.Reaction, user: discord.User
+    ) -> bool:
+        """
+        Establishes voice connection and starts recording via voice_connection.
+
+        This method handles three scenarios:
+        1. Bot is already in a voice channel in the guild.
+        2. User is in a voice channel, and the bot needs to connect.
+        3. Neither the bot nor the user is in a voice channel.
+
+        It attempts to start recording using `self.voice_connection.start_recording()`.
+        Sends messages to the reaction's channel on failure.
+
+        Args:
+            reaction: The reaction that triggered the action.
+            user: The user who added the reaction.
+
+        Returns:
+            bool: True if voice connection was established and recording started successfully, False otherwise.
+        """
+        # Scenario 1: Bot is already in a voice channel in this guild
+        if reaction.message.guild and reaction.message.guild.voice_client:
+            self.voice_connection.voice_client = reaction.message.guild.voice_client
+            if not self.voice_connection.start_recording():
+                logger.warning("Failed to start recording with existing voice client.")
+                return False
+        # Scenario 2: User is in a voice channel, bot needs to connect
+        elif user.voice and user.voice.channel:
+            try:
+                logger.info(
+                    f"User {user.name} is in voice channel {user.voice.channel.name}. Bot connecting."
+                )
+                if not await self.voice_connection.connect_to_channel(
+                    user.voice.channel
+                ):
+                    logger.error("Failed to connect to voice channel.")
+                    await reaction.message.channel.send(
+                        "Could not join your voice channel to start recording."
+                    )
+                    return False
+
+                if not self.voice_connection.start_recording():
+                    logger.error("Failed to start recording after connecting.")
+                    await reaction.message.channel.send(
+                        "Could not start recording in your voice channel."
+                    )
+                    return False
+                logger.info("Connected to voice and started new recording session.")
+            except Exception as e:
+                logger.error(f"Error connecting to voice channel for recording: {e}")
+                await reaction.message.channel.send(
+                    "Could not join your voice channel to start recording."
+                )
+                return False
+        # Scenario 3: Neither bot nor user is in a voice channel
+        else:
+            logger.warning(
+                "Bot is not connected to a voice channel in this guild, and user is not in a voice channel."
+            )
+            await reaction.message.channel.send(
+                "You need to be in a voice channel, or the bot needs to be in one, to start recording."
+            )
+            return False
+        return True
 
     @commands.Cog.listener()
     async def on_reaction_add(
@@ -234,6 +297,8 @@ class VoiceCog(commands.Cog):
             if await self._check_and_handle_connection_issues(reaction.message.channel):
                 return  # Connection issue detected, state changed to CONNECTION_ERROR
 
+            # Before starting a new recording, ensure any ongoing audio playback is stopped
+            # and notify the server to cancel any in-progress response generation.
             response_id_to_cancel = None
             guild = reaction.message.guild
             if guild and guild.voice_client and guild.voice_client.is_playing():
@@ -264,62 +329,16 @@ class VoiceCog(commands.Cog):
                 )
 
             if await self.bot_state_manager.start_recording(user):
-                # Scenario 1: Bot is already in a voice channel in this guild
-                if reaction.message.guild and reaction.message.guild.voice_client:
-                    self.voice_connection.voice_client = (
-                        reaction.message.guild.voice_client
-                    )
-                    if not self.voice_connection.start_recording():
-                        logger.warning(
-                            "Failed to start recording with existing voice client."
-                        )
-                        await self.bot_state_manager.stop_recording()
-                        return
-                # Scenario 2: User is in a voice channel, bot needs to connect
-                elif user.voice and user.voice.channel:
-                    try:
-                        logger.info(
-                            f"User {user.name} is in voice channel {user.voice.channel.name}. Bot connecting."
-                        )
-                        if not await self.voice_connection.connect_to_channel(
-                            user.voice.channel
-                        ):
-                            logger.error("Failed to connect to voice channel.")
-                            await self.bot_state_manager.stop_recording()
-                            await reaction.message.channel.send(
-                                "Could not join your voice channel to start recording."
-                            )
-                            return
-
-                        if not self.voice_connection.start_recording():
-                            logger.error("Failed to start recording after connecting.")
-                            await self.bot_state_manager.stop_recording()
-                            await reaction.message.channel.send(
-                                "Could not start recording in your voice channel."
-                            )
-                            return
-                        logger.info(
-                            "Connected to voice and started new recording session."
-                        )
-                    except Exception as e:
-                        logger.error(
-                            f"Error connecting to voice channel for recording: {e}"
-                        )
-                        await self.bot_state_manager.stop_recording()
-                        await reaction.message.channel.send(
-                            "Could not join your voice channel to start recording."
-                        )
-                        return
-                # Scenario 3: Neither bot nor user is in a voice channel
-                else:
-                    logger.warning(
-                        "Bot is not connected to a voice channel in this guild, and user is not in a voice channel."
+                # Attempt to establish voice connection and start recording
+                if not await self._establish_voice_and_start_recording(reaction, user):
+                    # If voice setup or initial recording start failed, roll back the recording state
+                    logger.info(
+                        "Rolling back to STANDBY state due to voice/recording setup failure."
                     )
                     await self.bot_state_manager.stop_recording()
-                    await reaction.message.channel.send(
-                        "You need to be in a voice channel, or the bot needs to be in one, to start recording."
-                    )
-                    return
+                    return  # Exit early as voice/recording setup failed
+                # If successful, recording is now active, and voice is connected.
+                # The state is already RECORDING, and the standby message has been updated.
 
         # Handle ❌ reaction to cancel recording
         elif (
@@ -420,7 +439,8 @@ class VoiceCog(commands.Cog):
 
         This command:
         1. Connects to the user's current voice channel (or moves if already connected elsewhere).
-        2. Ensures the audio playback loop is running for handling responses.
+        2. Relies on the audio playback loop (managed by `VoiceConnectionManager` and `AudioManager`)
+           for handling responses, which is initiated upon successful voice connection.
         3. Establishes a WebSocket connection if not already active.
         4. Transitions the bot to STANDBY state, ready for voice input.
 
@@ -528,8 +548,16 @@ class VoiceCog(commands.Cog):
         else:
             await ctx.send("WebSocket connection was not active.")
 
-    @tasks.loop(seconds=10.0)  # Check every 10 seconds
+    @tasks.loop(seconds=10.0)
     async def _connection_check_loop(self):
+        """
+        Periodically checks the health of critical connections (voice, WebSocket).
+
+        If the bot is in STANDBY or RECORDING state, it verifies connections and
+        transitions to CONNECTION_ERROR if issues are found.
+        If the bot is already in CONNECTION_ERROR state, it checks if connections
+        have recovered and attempts to transition back to STANDBY.
+        """
         if (
             self.bot_state_manager.current_state
             not in [
