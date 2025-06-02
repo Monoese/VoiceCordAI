@@ -11,7 +11,11 @@ from enum import Enum, auto
 
 class ConnectionState(Enum):
     """
-    Enum representing the possible states of a WebSocket connection.
+    Enumeration of possible states for a WebSocket connection.
+
+    These states are used to track and manage the lifecycle of
+    a WebSocket connection, from initial connection attempts
+    through active communication to disconnection.
 
     States:
     - DISCONNECTED: The connection is not established

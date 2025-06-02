@@ -21,7 +21,10 @@ from src.config.config import Config
 
 class BotStateEnum(Enum):
     """
-    Enumeration of possible bot states.
+    Enumeration of possible operational states for the Discord bot.
+
+    Each state represents a distinct mode of operation, influencing
+    how the bot responds to commands and events.
 
     - IDLE: Bot is not actively listening or processing voice.
     - STANDBY: Bot is ready to start recording when triggered.

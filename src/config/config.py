@@ -1,3 +1,12 @@
+"""
+Application configuration module.
+
+This module defines the Config class, which centralizes all
+application-wide settings, such as API keys, server URLs,
+audio processing parameters, and logging configurations.
+It loads values from environment variables and provides
+validation for required settings.
+"""
 import logging
 import os
 from pathlib import Path
@@ -15,6 +24,14 @@ class ConfigError(Exception):
 
 
 class Config:
+    """
+    Centralized configuration settings for the application.
+
+    This class holds all static configuration parameters, loaded primarily
+    from environment variables. It includes settings for API keys,
+    server connections, audio processing, bot behavior, and logging.
+    The `validate` method ensures that critical configurations are present.
+    """
     BASE_DIR: Path = (
         Path(__file__).resolve().parent.parent.parent
     )  # Base directory of the project
