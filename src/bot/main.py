@@ -4,7 +4,7 @@ Main entry point for the Discord bot application.
 This module initializes all the necessary components for the bot to function:
 - Audio management for voice processing
 - Bot state management for tracking the bot's current state
-- WebSocket communication for external service integration
+- OpenAI Realtime API communication via OpenAIRealtimeManager
 - Discord bot setup with appropriate intents and command prefix
 
 The bot is configured to use the VoiceCog for handling voice-related commands and events.
@@ -20,8 +20,11 @@ from src.bot.cogs.voice_cog import VoiceCog
 from src.config.config import Config
 from src.state.state import BotState
 from src.utils.logger import get_logger
-from src.websocket.event_handler import WebSocketEventHandler
-from src.websocket.manager import WebSocketManager
+
+# from src.websocket.event_handler import WebSocketEventHandler # Replaced by OpenAIEventHandlerAdapter
+# from src.websocket.manager import WebSocketManager # Replaced by OpenAIRealtimeManager
+from src.openai_adapter.manager import OpenAIRealtimeManager
+
 
 # Configure discord.py's internal logging.
 # root=False prevents it from reconfiguring the root logger we set up in src.utils.logger.
@@ -35,12 +38,11 @@ logger = get_logger(__name__)
 audio_manager: AudioManager = AudioManager()
 bot_state_manager: BotState = BotState()
 
-# --- Set up WebSocket Communication Layer ---
-event_handler: WebSocketEventHandler = WebSocketEventHandler(
-    audio_manager=audio_manager  # EventHandler needs AudioManager to process audio events
-)
-websocket_manager: WebSocketManager = WebSocketManager(
-    event_handler_instance=event_handler  # Manager uses EventHandler to dispatch received messages
+# --- Set up OpenAI Realtime API Communication Layer ---
+# The OpenAIRealtimeManager internally creates its own event handler adapter (OpenAIEventHandlerAdapter)
+# and connection handler (OpenAIRealtimeConnection).
+openai_realtime_manager: OpenAIRealtimeManager = OpenAIRealtimeManager(
+    audio_manager=audio_manager
 )
 
 # --- Configure Discord Bot ---
@@ -64,7 +66,7 @@ async def main():
             bot=bot,
             audio_manager=audio_manager,
             bot_state_manager=bot_state_manager,
-            websocket_manager=websocket_manager,
+            openai_realtime_manager=openai_realtime_manager,
         )
         await bot.add_cog(voice_cog_instance)
         logger.info("VoiceCog loaded and added to the bot.")

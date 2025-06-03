@@ -4,3 +4,4 @@ python-dotenv
 pydub
 websockets
 audioop-lts
+openai

@@ -12,7 +12,6 @@ The cog uses reaction-based controls to start and stop recording, making it user
 in Discord servers.
 """
 
-import uuid
 from typing import Optional, Union
 
 import discord
@@ -22,14 +21,17 @@ from src.audio.audio import AudioManager
 from src.bot.voice_connection import VoiceConnectionManager
 from src.state.state import BotState, BotStateEnum
 from src.utils.logger import get_logger
-from src.websocket.events.events import (
-    SessionUpdateEvent,
-    InputAudioBufferAppendEvent,
-    InputAudioBufferCommitEvent,
-    ResponseCreateEvent,
-    ResponseCancelEvent,
-)
-from src.websocket.manager import WebSocketManager
+
+# from src.websocket.events.events import ( # These events are no longer created directly
+#     SessionUpdateEvent,
+#     InputAudioBufferAppendEvent,
+#     InputAudioBufferCommitEvent,
+#     ResponseCreateEvent,
+#     ResponseCancelEvent,
+# )
+# from src.websocket.manager import WebSocketManager # Replaced by OpenAIRealtimeManager
+from src.openai_adapter.manager import OpenAIRealtimeManager
+
 
 logger = get_logger(__name__)
 
@@ -53,7 +55,7 @@ class VoiceCog(commands.Cog):
         bot: commands.Bot,
         audio_manager: AudioManager,
         bot_state_manager: BotState,
-        websocket_manager: WebSocketManager,
+        openai_realtime_manager: OpenAIRealtimeManager,  # Updated parameter name and type
     ):
         """
         Initialize the VoiceCog with required dependencies.
@@ -62,12 +64,14 @@ class VoiceCog(commands.Cog):
             bot: The Discord bot instance this cog is attached to
             audio_manager: Handles audio processing and playback
             bot_state_manager: Manages the bot's state transitions
-            websocket_manager: Manages WebSocket communication with external services
+            openai_realtime_manager: Manages OpenAI Realtime API communication
         """
         self.bot = bot
         self.audio_manager = audio_manager
         self.bot_state_manager = bot_state_manager
-        self.websocket_manager = websocket_manager
+        self.websocket_manager: OpenAIRealtimeManager = (
+            openai_realtime_manager  # Store the new manager
+        )
         self.voice_connection = VoiceConnectionManager(
             bot=bot,
             audio_manager=audio_manager,
@@ -107,7 +111,9 @@ class VoiceCog(commands.Cog):
                 )
 
         # Check WebSocket connection if voice is okay (or not applicable) and bot is not already in error for WS
-        if not issue_detected and not self.websocket_manager.connected:
+        if (
+            not issue_detected and not self.websocket_manager.is_connected()
+        ):  # Use is_connected()
             # Only transition to error if not already in CONNECTION_ERROR.
             # If it's already CONNECTION_ERROR, this check simply confirms WS is still down.
             if current_bot_state != BotStateEnum.CONNECTION_ERROR:
@@ -142,17 +148,16 @@ class VoiceCog(commands.Cog):
         """
         Send a session update event to the WebSocket server.
 
-        This method creates and sends a session.update event with turn_detection set to None,
-        which configures the session for proper audio handling.
+        This method sends a session update to the OpenAI Realtime API
+        to configure turn_detection.
         """
-        event = SessionUpdateEvent(
-            event_id=f"event_{uuid.uuid4()}",
-            type="session.update",
-            session={"turn_detection": None},
-        )
-        success = await self.websocket_manager.safe_send_event(event)
+        # The new manager method takes the session data directly.
+        session_data = {
+            "turn_detection": None
+        }  # Example: or {"modalities": ["text", "audio"]}
+        success = await self.websocket_manager.send_session_update(session_data)
         if not success:
-            logger.error("Failed to send session update event")
+            logger.error("Failed to send session update")
 
     async def _send_audio_events(self, base64_audio: str) -> None:
         """
@@ -166,30 +171,22 @@ class VoiceCog(commands.Cog):
         Args:
             base64_audio: Base64-encoded audio data to send to the server
         """
-        append_event = InputAudioBufferAppendEvent(
-            event_id=f"event_{uuid.uuid4()}",
-            type="input_audio_buffer.append",
-            audio=base64_audio,
-        )
-        if not await self.websocket_manager.safe_send_event(append_event):
-            logger.error("Failed to send audio append event")
+        # Use the new manager's methods directly.
+        # These methods in OpenAIRealtimeManager currently return bool but don't ensure connection first.
+        # This behavior is different from safe_send_event.
+        # For now, we'll proceed with this, assuming connection is managed elsewhere (e.g., connect_command, _connection_check_loop).
+
+        if not await self.websocket_manager.send_audio_chunk(base64_audio):
+            logger.error("Failed to send audio chunk")
+            return  # If append fails, probably don't commit or create response.
+
+        if not await self.websocket_manager.commit_audio_buffer():
+            logger.error("Failed to commit audio buffer")
             return
 
-        commit_event = InputAudioBufferCommitEvent(
-            event_id=f"event_{uuid.uuid4()}",
-            type="input_audio_buffer.commit",
-        )
-        if not await self.websocket_manager.safe_send_event(commit_event):
-            logger.error("Failed to send audio commit event")
-            return
-
-        response_create_event = ResponseCreateEvent(
-            event_id=f"event_{uuid.uuid4()}",
-            type="response.create",
-        )
-        if not await self.websocket_manager.safe_send_event(response_create_event):
-            logger.error("Failed to send response create event")
-            # No return here, as previous events might have succeeded.
+        # response_data can be None for default, or specify modalities e.g. {"modalities": ["text", "audio"]}
+        if not await self.websocket_manager.create_response(response_data=None):
+            logger.error("Failed to create response")
 
     async def _establish_voice_and_start_recording(
         self, reaction: discord.Reaction, user: discord.User
@@ -311,21 +308,19 @@ class VoiceCog(commands.Cog):
                 guild.voice_client.stop()  # Stop discord.py audio playback
 
             # Send response.cancel event to the server, even if nothing was playing (server handles default)
-            cancel_event = ResponseCancelEvent(
-                event_id=f"event_{uuid.uuid4()}",
-                type="response.cancel",
-                response_id=response_id_to_cancel,  # Can be None
-            )
             log_msg = (
-                f"Sending response.cancel event for response_id: {response_id_to_cancel}."
+                f"Sending response.cancel for response_id: {response_id_to_cancel}."
                 if response_id_to_cancel
-                else "Sending response.cancel event for default in-progress response."
+                else "Sending response.cancel for default in-progress response."
             )
             logger.info(log_msg)
 
-            if not await self.websocket_manager.safe_send_event(cancel_event):
+            # Use the new manager's method.
+            if not await self.websocket_manager.cancel_response(
+                response_id=response_id_to_cancel
+            ):
                 logger.error(
-                    "Failed to send response.cancel event. Continuing with recording..."
+                    "Failed to send response.cancel. Continuing with recording..."
                 )
 
             if await self.bot_state_manager.start_recording(user):
@@ -466,12 +461,13 @@ class VoiceCog(commands.Cog):
             return
 
         # Attempt to connect to WebSocket
-        websocket_connected = self.websocket_manager.connected
-        if not websocket_connected:
-            logger.info("Attempting to establish WebSocket connection...")
-            websocket_connected = await self.websocket_manager.ensure_connected()
+        is_ws_connected = self.websocket_manager.is_connected()  # Use is_connected()
+        if not is_ws_connected:
+            logger.info("Attempting to establish OpenAI Realtime API connection...")
+            # ensure_connected in OpenAIRealtimeManager attempts to start and waits.
+            is_ws_connected = await self.websocket_manager.ensure_connected()
 
-        if not websocket_connected:
+        if not is_ws_connected:
             await ctx.send("Failed to establish WebSocket connection.")
             await self.bot_state_manager.enter_connection_error_state()
             if (
@@ -488,12 +484,12 @@ class VoiceCog(commands.Cog):
 
         # If WebSocket was already connected or successfully connected now
         if (
-            self.websocket_manager.connected
+            self.websocket_manager.is_connected()  # Use is_connected()
         ):  # Double check, ensure_connected might have succeeded
             await self._queue_session_update()  # Send initial session configuration
         else:  # Should not happen if ensure_connected was true, but as a safeguard
             logger.error(
-                "WebSocket connection reported success but manager state is not connected."
+                "OpenAI Realtime API connection reported success but manager state is not connected."
             )
             await ctx.send("Internal inconsistency with WebSocket connection status.")
             await self.bot_state_manager.enter_connection_error_state()
@@ -535,18 +531,20 @@ class VoiceCog(commands.Cog):
         else:
             await ctx.send("Disconnected from voice channel.")
 
-        # If not in a voice channel, it might still be connected to WebSocket.
-        # Always attempt to stop WebSocket if it's connected.
-        if self.websocket_manager.connected:
+        # If not in a voice channel, it might still be connected to OpenAI Realtime API.
+        # Always attempt to stop if it's connected.
+        if self.websocket_manager.is_connected():  # Use is_connected()
             try:
-                logger.info("Stopping WebSocket connection...")
+                logger.info("Stopping OpenAI Realtime API connection...")
                 await self.websocket_manager.stop()
-                await ctx.send("WebSocket connection stopped.")
+                await ctx.send("OpenAI Realtime API connection stopped.")
             except Exception as e:
-                logger.error(f"Failed to disconnect from WebSocket server: {e}")
-                await ctx.send("Error stopping WebSocket connection.")
+                logger.error(
+                    f"Failed to disconnect from OpenAI Realtime API server: {e}"
+                )
+                await ctx.send("Error stopping OpenAI Realtime API connection.")
         else:
-            await ctx.send("WebSocket connection was not active.")
+            await ctx.send("OpenAI Realtime API connection was not active.")
 
     @tasks.loop(seconds=10.0)
     async def _connection_check_loop(self):
@@ -577,7 +575,7 @@ class VoiceCog(commands.Cog):
         if self.bot_state_manager.current_state == BotStateEnum.CONNECTION_ERROR:
             if (
                 self.voice_connection.is_connected()
-                and self.websocket_manager.connected
+                and self.websocket_manager.is_connected()  # Use is_connected()
             ):
                 logger.info(
                     "Connections appear to be restored while in CONNECTION_ERROR state. Attempting to recover to STANDBY."
@@ -608,6 +606,6 @@ class VoiceCog(commands.Cog):
 
 async def setup(bot: commands.Bot):
     raise NotImplementedError(
-        "VoiceCog requires dependencies (audio_manager, bot_state_manager, websocket_manager) and cannot be loaded as a standard extension. "
+        "VoiceCog requires dependencies (audio_manager, bot_state_manager, openai_realtime_manager) and cannot be loaded as a standard extension. "
         "Instantiate and add it manually in your main script."
     )

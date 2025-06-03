@@ -7,6 +7,7 @@ audio processing parameters, and logging configurations.
 It loads values from environment variables and provides
 validation for required settings.
 """
+
 import logging
 import os
 from pathlib import Path
@@ -32,6 +33,7 @@ class Config:
     server connections, audio processing, bot behavior, and logging.
     The `validate` method ensures that critical configurations are present.
     """
+
     BASE_DIR: Path = (
         Path(__file__).resolve().parent.parent.parent
     )  # Base directory of the project
@@ -41,6 +43,9 @@ class Config:
     OPENAI_API_KEY: Optional[str] = os.getenv("OPENAI_API_KEY")
     WS_SERVER_URL: str = (  # WebSocket server URL for real-time processing
         "wss://api.openai.com/v1/realtime?model=gpt-4o-mini-realtime-preview-2024-12-17"
+    )
+    OPENAI_REALTIME_MODEL_NAME: str = os.getenv(
+        "OPENAI_REALTIME_MODEL_NAME", "gpt-4o-mini-realtime-preview"
     )
 
     # Bot Command Settings
