@@ -502,14 +502,14 @@ class VoiceCog(commands.Cog):
         reset_success = await self.bot_state_manager.reset_to_idle()
         if not reset_success:
             await ctx.send("Bot was already in idle state or could not be reset.")
-        else:
-            await ctx.send("Bot state reset to idle.")
+        # else:
+            # await ctx.send("Bot state reset to idle.") # Removed as per user request
 
         disconnected_voice = await self.voice_connection.disconnect()
         if not disconnected_voice:
             await ctx.send("Bot was not in a voice channel or failed to disconnect.")
-        else:
-            await ctx.send("Disconnected from voice channel.")
+        # else:
+            # await ctx.send("Disconnected from voice channel.") # Removed as per user request
 
         # If not in a voice channel, it might still be connected to the AI service.
         # Always attempt to stop if it's connected.
@@ -517,7 +517,7 @@ class VoiceCog(commands.Cog):
             try:
                 logger.info("Stopping AI service connection...")
                 await self.ai_service_manager.disconnect()
-                await ctx.send("AI service connection stopped.")
+                # await ctx.send("AI service connection stopped.") # Removed as per user request
             except Exception as e:
                 logger.error(f"Failed to disconnect from AI service: {e}")
                 await ctx.send("Error stopping AI service connection.")
