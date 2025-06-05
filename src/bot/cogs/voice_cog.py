@@ -4,7 +4,7 @@ Voice Cog module for Discord bot voice interaction functionality.
 This module provides the VoiceCog class which handles all voice-related commands and events:
 - Connecting to voice channels
 - Recording user audio
-- Processing audio through WebSocket services
+- Processing audio through real-time AI services
 - Playing back audio responses
 - Managing the bot's state during voice interactions
 
@@ -30,7 +30,8 @@ from src.utils.logger import get_logger
 #     ResponseCancelEvent,
 # )
 # from src.websocket.manager import WebSocketManager # Replaced by OpenAIRealtimeManager
-from src.openai_adapter.manager import OpenAIRealtimeManager
+# from src.openai_adapter.manager import OpenAIRealtimeManager # Replaced by IRealtimeAIServiceManager
+from src.ai_services.interface import IRealtimeAIServiceManager
 
 
 logger = get_logger(__name__)
@@ -43,7 +44,7 @@ class VoiceCog(commands.Cog):
     This cog manages:
     - Voice channel connections
     - Audio recording from users
-    - Sending recorded audio to external services via WebSocket
+    - Sending recorded audio to the AI service
     - Playing back audio responses
     - State transitions between idle, standby, and recording states
 
@@ -55,7 +56,7 @@ class VoiceCog(commands.Cog):
         bot: commands.Bot,
         audio_manager: AudioManager,
         bot_state_manager: BotState,
-        openai_realtime_manager: OpenAIRealtimeManager,  # Updated parameter name and type
+        ai_service_manager: IRealtimeAIServiceManager,
     ):
         """
         Initialize the VoiceCog with required dependencies.
@@ -64,14 +65,12 @@ class VoiceCog(commands.Cog):
             bot: The Discord bot instance this cog is attached to
             audio_manager: Handles audio processing and playback
             bot_state_manager: Manages the bot's state transitions
-            openai_realtime_manager: Manages OpenAI Realtime API communication
+            ai_service_manager: Manages communication with the real-time AI service
         """
         self.bot = bot
         self.audio_manager = audio_manager
         self.bot_state_manager = bot_state_manager
-        self.websocket_manager: OpenAIRealtimeManager = (
-            openai_realtime_manager  # Store the new manager
-        )
+        self.ai_service_manager: IRealtimeAIServiceManager = ai_service_manager
         self.voice_connection = VoiceConnectionManager(
             bot=bot,
             audio_manager=audio_manager,
@@ -110,17 +109,13 @@ class VoiceCog(commands.Cog):
                     "Connection check: Voice connection found to be inactive while in STANDBY or RECORDING state."
                 )
 
-        # Check WebSocket connection if voice is okay (or not applicable) and bot is not already in error for WS
-        if (
-            not issue_detected and not self.websocket_manager.is_connected()
-        ):  # Use is_connected()
-            # Only transition to error if not already in CONNECTION_ERROR.
-            # If it's already CONNECTION_ERROR, this check simply confirms WS is still down.
+        # Check AI service connection if voice is okay (or not applicable) and bot is not already in error for it
+        if not issue_detected and not self.ai_service_manager.is_connected():
             if current_bot_state != BotStateEnum.CONNECTION_ERROR:
                 issue_detected = True
-                issue_description = "WebSocket connection lost."
+                issue_description = "AI service connection lost."  # Generic message
                 logger.warning(
-                    "Connection check: WebSocket connection found to be inactive."
+                    "Connection check: AI service connection found to be inactive."
                 )
 
         if issue_detected:
@@ -144,49 +139,29 @@ class VoiceCog(commands.Cog):
 
         return False  # No new issue detected that required a state change
 
-    async def _queue_session_update(self) -> None:
+    async def _process_and_send_audio(self, pcm_data: bytes) -> None:
         """
-        Send a session update event to the WebSocket server.
+        Processes recorded PCM audio and sends it to the AI service.
 
-        This method sends a session update to the OpenAI Realtime API
-        to configure turn_detection.
-        """
-        # The new manager method takes the session data directly.
-        session_data = {
-            "turn_detection": None
-        }  # Example: or {"modalities": ["text", "audio"]}
-        success = await self.websocket_manager.send_session_update(session_data)
-        if not success:
-            logger.error("Failed to send session update")
-
-    async def _send_audio_events(self, base64_audio: str) -> None:
-        """
-        Send a sequence of audio-related events to the WebSocket server.
-
-        This method sends three events in sequence:
-        1. input_audio_buffer.append - Adds the base64-encoded audio to the input buffer
-        2. input_audio_buffer.commit - Commits the audio buffer for processing
-        3. response.create - Requests a response based on the committed audio
+        This method:
+        1. Sends the audio chunk.
+        2. Finalizes the input and requests a response from the AI service.
 
         Args:
-            base64_audio: Base64-encoded audio data to send to the server
+            pcm_data: Raw PCM audio data captured from the user.
         """
-        # Use the new manager's methods directly.
-        # These methods in OpenAIRealtimeManager currently return bool but don't ensure connection first.
-        # This behavior is different from safe_send_event.
-        # For now, we'll proceed with this, assuming connection is managed elsewhere (e.g., connect_command, _connection_check_loop).
-
-        if not await self.websocket_manager.send_audio_chunk(base64_audio):
-            logger.error("Failed to send audio chunk")
-            return  # If append fails, probably don't commit or create response.
-
-        if not await self.websocket_manager.commit_audio_buffer():
-            logger.error("Failed to commit audio buffer")
+        if not await self.ai_service_manager.send_audio_chunk(pcm_data):
+            logger.error("Failed to send audio chunk to AI service.")
+            # Optionally, inform the user or change state
             return
 
-        # response_data can be None for default, or specify modalities e.g. {"modalities": ["text", "audio"]}
-        if not await self.websocket_manager.create_response(response_data=None):
-            logger.error("Failed to create response")
+        if not await self.ai_service_manager.finalize_input_and_request_response():
+            logger.error(
+                "Failed to finalize input and request response from AI service."
+            )
+            # Optionally, inform the user or change state
+            return
+        logger.info("Successfully sent audio and requested response from AI service.")
 
     async def _establish_voice_and_start_recording(
         self, reaction: discord.Reaction, user: discord.User
@@ -263,7 +238,7 @@ class VoiceCog(commands.Cog):
 
         Handles:
         - 🎙 reaction on standby message: Starts recording if in STANDBY state.
-          If audio is playing, it stops playback and sends a response.cancel event.
+          If audio is playing, it stops playback and requests cancellation of any ongoing AI response.
         - ❌ reaction on standby message: Cancels recording if in RECORDING state.
 
         Ensures the bot is connected to a voice channel for recording.
@@ -295,7 +270,7 @@ class VoiceCog(commands.Cog):
                 return  # Connection issue detected, state changed to CONNECTION_ERROR
 
             # Before starting a new recording, ensure any ongoing audio playback is stopped
-            # and notify the server to cancel any in-progress response generation.
+            # and notify the AI service to cancel any in-progress response generation.
             response_id_to_cancel = None
             guild = reaction.message.guild
             if guild and guild.voice_client and guild.voice_client.is_playing():
@@ -316,11 +291,9 @@ class VoiceCog(commands.Cog):
             logger.info(log_msg)
 
             # Use the new manager's method.
-            if not await self.websocket_manager.cancel_response(
-                response_id=response_id_to_cancel
-            ):
+            if not await self.ai_service_manager.cancel_ongoing_response():
                 logger.error(
-                    "Failed to send response.cancel. Continuing with recording..."
+                    "Failed to send cancel_ongoing_response. Continuing with recording..."
                 )
 
             if await self.bot_state_manager.start_recording(user):
@@ -344,7 +317,13 @@ class VoiceCog(commands.Cog):
             if await self.bot_state_manager.stop_recording():
                 if self.voice_connection.is_recording():
                     self.voice_connection.stop_recording()
-                    logger.info("Stopped listening due to cancellation.")
+                    logger.info(
+                        "Stopped listening due to cancellation. Attempting to cancel AI response."
+                    )
+                    if not await self.ai_service_manager.cancel_ongoing_response():
+                        logger.error(
+                            "Failed to request cancellation of ongoing response during user cancellation."
+                        )
                 await reaction.message.channel.send(
                     f"{user.display_name} canceled recording. Returning to standby."
                 )
@@ -357,7 +336,7 @@ class VoiceCog(commands.Cog):
         Event listener for when a reaction is removed from a message.
 
         Handles removal of 🎙 reaction from the standby message while in RECORDING state.
-        This stops recording, processes audio, sends it to WebSocket, and returns to STANDBY.
+        This stops recording, processes audio, sends it to the AI service, and returns to STANDBY.
 
         Args:
             reaction: The reaction that was removed.
@@ -408,9 +387,24 @@ class VoiceCog(commands.Cog):
             logger.info("Stopped listening on reaction remove.")
 
             if pcm_data:
-                processed_audio = await self.audio_manager.ffmpeg_to_24k_mono(pcm_data)
-                base64_audio = self.audio_manager.encode_to_base64(processed_audio)
-                await self._send_audio_events(base64_audio)
+                # Process the raw PCM data from Discord (likely 48kHz stereo)
+                # to the format expected by the AI service.
+                logger.debug(f"Raw PCM data size from Discord: {len(pcm_data)} bytes.")
+                try:
+                    # Defaulting to PROCESSING_AUDIO_FRAME_RATE and PROCESSING_AUDIO_CHANNELS from Config
+                    # which should be 24kHz mono for OpenAI, handled by resample_and_convert_audio defaults.
+                    processed_pcm_data = (
+                        await self.audio_manager.resample_and_convert_audio(pcm_data)
+                    )
+                    logger.debug(
+                        f"Processed PCM data size: {len(processed_pcm_data)} bytes."
+                    )
+                    await self._process_and_send_audio(processed_pcm_data)
+                except RuntimeError as e:
+                    logger.error(f"Error processing audio with ffmpeg: {e}")
+                    await reaction.message.channel.send(
+                        "Error processing your audio. Please try again."
+                    )
             else:
                 await reaction.message.channel.send("No audio data was captured.")
 
@@ -430,13 +424,13 @@ class VoiceCog(commands.Cog):
     @commands.command(name="connect")
     async def connect_command(self, ctx: commands.Context) -> None:
         """
-        Command to connect the bot to a voice channel, establish WebSocket connection, and enter standby mode.
+        Command to connect the bot to a voice channel, establish AI service connection, and enter standby mode.
 
         This command:
         1. Connects to the user's current voice channel (or moves if already connected elsewhere).
         2. Relies on the audio playback loop (managed by `VoiceConnectionManager` and `AudioManager`)
            for handling responses, which is initiated upon successful voice connection.
-        3. Establishes a WebSocket connection if not already active.
+        3. Establishes an AI service connection if not already active.
         4. Transitions the bot to STANDBY state, ready for voice input.
 
         Args:
@@ -460,40 +454,26 @@ class VoiceCog(commands.Cog):
                 )
             return
 
-        # Attempt to connect to WebSocket
-        is_ws_connected = self.websocket_manager.is_connected()  # Use is_connected()
-        if not is_ws_connected:
-            logger.info("Attempting to establish OpenAI Realtime API connection...")
-            # ensure_connected in OpenAIRealtimeManager attempts to start and waits.
-            is_ws_connected = await self.websocket_manager.ensure_connected()
+        # Attempt to connect to AI Service
+        is_ai_service_connected = self.ai_service_manager.is_connected()
+        if not is_ai_service_connected:
+            logger.info("Attempting to establish AI service connection...")
+            is_ai_service_connected = await self.ai_service_manager.connect()
 
-        if not is_ws_connected:
-            await ctx.send("Failed to establish WebSocket connection.")
+        if not is_ai_service_connected:
+            await ctx.send("Failed to establish AI service connection.")
             await self.bot_state_manager.enter_connection_error_state()
-            if (
-                self.bot_state_manager.standby_message
-            ):  # If standby message was created before this fail
-                await self.bot_state_manager.standby_message.channel.send(
-                    "Bot entered error state due to WebSocket connection failure."
-                )
-            elif ctx:  # If standby message doesn't exist yet
-                await ctx.send(
-                    "Bot entered error state due to WebSocket connection failure."
-                )
-            return
-
-        # If WebSocket was already connected or successfully connected now
-        if (
-            self.websocket_manager.is_connected()  # Use is_connected()
-        ):  # Double check, ensure_connected might have succeeded
-            await self._queue_session_update()  # Send initial session configuration
-        else:  # Should not happen if ensure_connected was true, but as a safeguard
-            logger.error(
-                "OpenAI Realtime API connection reported success but manager state is not connected."
+            msg_channel = (
+                self.bot_state_manager.standby_message.channel
+                if self.bot_state_manager.standby_message
+                else ctx.channel
             )
-            await ctx.send("Internal inconsistency with WebSocket connection status.")
-            await self.bot_state_manager.enter_connection_error_state()
+            await msg_channel.send(
+                "Bot entered error state due to AI service connection failure."
+            )
             return
+
+        # Initial session update logic is now part of ai_service_manager.connect()
 
         # Final check before initializing standby
         if await self._check_and_handle_connection_issues(ctx):
@@ -509,12 +489,12 @@ class VoiceCog(commands.Cog):
     @commands.command(name="disconnect")
     async def disconnect_command(self, ctx: commands.Context) -> None:
         """
-        Command to disconnect the bot from voice channel, stop WebSocket connection, and return to idle state.
+        Command to disconnect the bot from voice channel, stop AI service connection, and return to idle state.
 
         This command:
         1. Resets the bot to IDLE state, stopping any active recording/listening.
         2. Disconnects from the voice channel, stopping audio playback.
-        3. Stops the WebSocket connection.
+        3. Stops the AI service connection.
 
         Args:
             ctx: The command context containing information about the invocation
@@ -531,25 +511,23 @@ class VoiceCog(commands.Cog):
         else:
             await ctx.send("Disconnected from voice channel.")
 
-        # If not in a voice channel, it might still be connected to OpenAI Realtime API.
+        # If not in a voice channel, it might still be connected to the AI service.
         # Always attempt to stop if it's connected.
-        if self.websocket_manager.is_connected():  # Use is_connected()
+        if self.ai_service_manager.is_connected():
             try:
-                logger.info("Stopping OpenAI Realtime API connection...")
-                await self.websocket_manager.stop()
-                await ctx.send("OpenAI Realtime API connection stopped.")
+                logger.info("Stopping AI service connection...")
+                await self.ai_service_manager.disconnect()
+                await ctx.send("AI service connection stopped.")
             except Exception as e:
-                logger.error(
-                    f"Failed to disconnect from OpenAI Realtime API server: {e}"
-                )
-                await ctx.send("Error stopping OpenAI Realtime API connection.")
+                logger.error(f"Failed to disconnect from AI service: {e}")
+                await ctx.send("Error stopping AI service connection.")
         else:
-            await ctx.send("OpenAI Realtime API connection was not active.")
+            await ctx.send("AI service connection was not active.")
 
     @tasks.loop(seconds=10.0)
     async def _connection_check_loop(self):
         """
-        Periodically checks the health of critical connections (voice, WebSocket).
+        Periodically checks the health of critical connections (voice, AI service).
 
         If the bot is in STANDBY or RECORDING state, it verifies connections and
         transitions to CONNECTION_ERROR if issues are found.
@@ -575,7 +553,7 @@ class VoiceCog(commands.Cog):
         if self.bot_state_manager.current_state == BotStateEnum.CONNECTION_ERROR:
             if (
                 self.voice_connection.is_connected()
-                and self.websocket_manager.is_connected()  # Use is_connected()
+                and self.ai_service_manager.is_connected()  # Check AI service
             ):
                 logger.info(
                     "Connections appear to be restored while in CONNECTION_ERROR state. Attempting to recover to STANDBY."
@@ -606,6 +584,6 @@ class VoiceCog(commands.Cog):
 
 async def setup(bot: commands.Bot):
     raise NotImplementedError(
-        "VoiceCog requires dependencies (audio_manager, bot_state_manager, openai_realtime_manager) and cannot be loaded as a standard extension. "
+        "VoiceCog requires dependencies (audio_manager, bot_state_manager, ai_service_manager) and cannot be loaded as a standard extension. "
         "Instantiate and add it manually in your main script."
     )

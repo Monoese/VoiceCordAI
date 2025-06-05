@@ -8,6 +8,7 @@ and event handling.
 """
 
 import asyncio
+import base64  # Added import
 from typing import Optional, Dict, Any
 
 from openai import AsyncOpenAI
@@ -17,14 +18,17 @@ from openai.resources.beta.realtime.realtime import (
 
 from src.config.config import Config
 from src.utils.logger import get_logger
-from src.audio.audio import AudioManager  # Required for OpenAIEventHandlerAdapter
+from src.audio.audio import AudioManager
 from .connection import OpenAIRealtimeConnection
 from .event_mapper import OpenAIEventHandlerAdapter
+from src.ai_services.interface import IRealtimeAIServiceManager  # Added import
 
 logger = get_logger(__name__)
 
 
-class OpenAIRealtimeManager:
+class OpenAIRealtimeManager(
+    IRealtimeAIServiceManager
+):  # Inherit from IRealtimeAIServiceManager
     """
     Manages interactions with the OpenAI Realtime API using the OpenAI Python library.
 
@@ -33,70 +37,152 @@ class OpenAIRealtimeManager:
     - Managing the OpenAIRealtimeConnection for WebSocket communication.
     - Coordinating with OpenAIEventHandlerAdapter for processing incoming events.
     - Providing methods to send various commands/data to the OpenAI Realtime API.
-    - Managing the lifecycle (start, stop) of the connection.
+    - Managing the connection lifecycle (connect, disconnect) as per the IRealtimeAIServiceManager interface.
     """
 
-    def __init__(self, audio_manager: AudioManager):
+    def __init__(
+        self, audio_manager: AudioManager, service_config: Dict[str, Any]
+    ):  # Added service_config
         """
         Initializes the OpenAIRealtimeManager.
 
         Args:
             audio_manager: An instance of AudioManager, required by the event handler.
+            service_config: Configuration specific to this service instance.
         """
-        self.audio_manager: AudioManager = audio_manager
+        super().__init__(audio_manager, service_config)  # Call super().__init__
+        # self.audio_manager is now set by super()
+        # self._service_config is now set by super()
+        # self._is_connected_flag is now set by super()
 
         # Initialize the OpenAI client. It uses OPENAI_API_KEY from env by default.
         # Config.OPENAI_API_KEY ensures it's loaded.
-        self.openai_client: AsyncOpenAI = AsyncOpenAI(api_key=Config.OPENAI_API_KEY)
+        # service_config could override API key if needed, e.g., self._service_config.get("api_key", Config.OPENAI_API_KEY)
+        self.openai_client: AsyncOpenAI = AsyncOpenAI(
+            api_key=self._service_config.get("api_key", Config.OPENAI_API_KEY)
+        )
 
         self.event_handler_adapter: OpenAIEventHandlerAdapter = (
-            OpenAIEventHandlerAdapter(audio_manager=self.audio_manager)
+            OpenAIEventHandlerAdapter(audio_manager=self._audio_manager)
         )
         self.connection_handler: OpenAIRealtimeConnection = OpenAIRealtimeConnection(
             client=self.openai_client
         )
-        self._main_task: Optional[asyncio.Task] = None
+        # self._main_task: Optional[asyncio.Task] = None # This was not used actively
 
     async def _get_active_conn(self) -> Optional[OpenAIConnectionObject]:
         """Helper to get the active connection object if connected."""
+        # Use the flag from the parent class for the primary check
+        if not self._is_connected_flag:
+            logger.debug("_get_active_conn: Not connected based on internal flag.")
+            return None
+
+        # Double check with connection_handler for sanity, though _is_connected_flag should be authoritative
         if self.connection_handler.is_connected():
             conn = self.connection_handler.get_active_connection()
             if conn:
                 return conn
             else:
                 logger.warning(
-                    "_get_active_conn: is_connected is True, but get_active_connection returned None."
+                    "_get_active_conn: _is_connected_flag is True, but connection_handler.get_active_connection returned None."
                 )
-        logger.debug("_get_active_conn: Not connected or no active connection object.")
+        else:
+            logger.warning(
+                "_get_active_conn: _is_connected_flag is True, but connection_handler.is_connected is False. State inconsistency."
+            )
         return None
 
-    # --- Methods for Sending Events to OpenAI Realtime API ---
+    # --- Interface Methods Implementation ---
 
-    async def send_session_update(self, session_data: Dict[str, Any]) -> bool:
+    async def connect(self) -> bool:
         """
-        Updates the session configuration.
-        Example: `session_data={"turn_detection": {"type": "server_vad"}}`
-                 `session_data={"modalities": ["text", "audio"]}`
+        Establishes a connection to the OpenAI Realtime API and initializes the session.
         """
-        conn = await self._get_active_conn()
-        if not conn:
-            logger.error("Cannot send session update: Not connected.")
-            return False
-        try:
-            await conn.session.update(session=session_data)
-            logger.info(f"Sent session.update: {session_data}")
+        logger.info("OpenAIRealtimeManager: Attempting to connect...")
+        if self._is_connected_flag:
+            logger.info("OpenAIRealtimeManager: Already connected.")
             return True
-        except Exception as e:
-            logger.error(f"Error sending session.update: {e}", exc_info=True)
-            return False
 
-    async def send_audio_chunk(self, audio_b64: str) -> bool:
-        """Appends a base64 encoded audio chunk to the input audio buffer."""
+        await self.connection_handler.connect(self.event_handler_adapter.dispatch_event)
+
+        # Wait for the connection to be established
+        timeout = self._service_config.get("connection_timeout", 30.0)
+        wait_interval = 0.1
+        max_attempts = int(timeout / wait_interval)
+
+        for attempt in range(max_attempts):
+            if (
+                self.connection_handler.is_connected()
+            ):  # Check underlying connection status
+                logger.info(
+                    "OpenAIRealtimeManager: Connection successfully established with handler."
+                )
+
+                # Send initial session update if configured
+                initial_session_data = self._service_config.get("initial_session_data")
+                if initial_session_data:
+                    # Directly use connection_handler to get the connection object at this stage
+                    conn_obj = self.connection_handler.get_active_connection()
+                    if conn_obj:
+                        try:
+                            await conn_obj.session.update(session=initial_session_data)
+                            logger.info(
+                                f"Sent initial session.update: {initial_session_data}"
+                            )
+                        except Exception as e:
+                            logger.error(
+                                f"Error sending initial session.update: {e}",
+                                exc_info=True,
+                            )
+                            # Clean up using the connection_handler directly and ensure our flag is false
+                            await self.connection_handler.disconnect()
+                            self._is_connected_flag = False
+                            return False
+                    else:
+                        # This case should ideally not be hit if connection_handler.is_connected() was true
+                        logger.error(
+                            "Failed to get active connection object from connection_handler for session update, though handler reported connected."
+                        )
+                        await self.connection_handler.disconnect()
+                        self._is_connected_flag = False
+                        return False
+
+                self._is_connected_flag = True  # Set our authoritative flag
+                return True
+            if attempt < max_attempts - 1:
+                await asyncio.sleep(wait_interval)
+
+        logger.warning(
+            f"OpenAIRealtimeManager: Failed to establish connection within {timeout}s timeout."
+        )
+        await (
+            self.connection_handler.disconnect()
+        )  # Ensure cleanup if connection attempt failed
+        self._is_connected_flag = False
+        return False
+
+    async def disconnect(self) -> None:
+        """
+        Closes the connection to the OpenAI Realtime API and cleans up resources.
+        """
+        logger.info("OpenAIRealtimeManager: Attempting to disconnect...")
+        await self.connection_handler.disconnect()
+        self._is_connected_flag = False
+        logger.info("OpenAIRealtimeManager: Disconnected.")
+
+    # is_connected() is inherited from IRealtimeAIServiceManager and uses self._is_connected_flag
+
+    async def send_audio_chunk(self, audio_data: bytes) -> bool:
+        """
+        Sends a chunk of raw audio data to the OpenAI service.
+        The data is base64 encoded before sending.
+        """
         conn = await self._get_active_conn()
         if not conn:
             logger.error("Cannot send audio chunk: Not connected.")
             return False
         try:
+            audio_b64 = base64.b64encode(audio_data).decode("utf-8")
             await conn.input_audio_buffer.append(audio=audio_b64)
             logger.debug("Sent input_audio_buffer.append")
             return True
@@ -104,61 +190,77 @@ class OpenAIRealtimeManager:
             logger.error(f"Error sending input_audio_buffer.append: {e}", exc_info=True)
             return False
 
-    async def commit_audio_buffer(self) -> bool:
-        """Commits the currently buffered input audio for processing."""
+    async def send_text_message(self, text: str, finalize_turn: bool) -> bool:
+        """
+        Sends a text message. OpenAI's real-time API might not directly support
+        this in the same way as audio. This is a placeholder or needs specific mapping.
+        Using conversation.item.create for now if text is provided.
+        The `finalize_turn` parameter is not directly used by OpenAI's `conversation.item.create`
+        in the same way as Gemini's `turn_complete`.
+        """
         conn = await self._get_active_conn()
         if not conn:
-            logger.error("Cannot commit audio buffer: Not connected.")
-            return False
-        try:
-            await conn.input_audio_buffer.commit()
-            logger.info("Sent input_audio_buffer.commit")
-            return True
-        except Exception as e:
-            logger.error(f"Error sending input_audio_buffer.commit: {e}", exc_info=True)
+            logger.error("Cannot send text message: Not connected.")
             return False
 
-    async def send_conversation_item(self, item_data: Dict[str, Any]) -> bool:
-        """
-        Creates a new item in the conversation.
-        Example: `item_data={"type": "message", "role": "user", "content": [{"type": "input_text", "text": "Hello!"}]}`
-        """
-        conn = await self._get_active_conn()
-        if not conn:
-            logger.error("Cannot send conversation item: Not connected.")
+        if not text:
+            logger.warning("send_text_message called with empty text.")
             return False
+
+        # Example mapping to conversation.item.create
+        # This assumes the text is a user message.
+        item_data = {
+            "type": "message",
+            "role": "user",
+            "content": [{"type": "input_text", "text": text}],
+        }
         try:
             await conn.conversation.item.create(item=item_data)
-            logger.info(f"Sent conversation.item.create: {item_data}")
+            logger.info(
+                f"Sent conversation.item.create for text message: {text} (finalize_turn: {finalize_turn})"
+            )
+            # If finalize_turn is True, we might immediately want to request a response.
+            # This depends on the desired interaction flow.
+            if finalize_turn:
+                return (
+                    await self.finalize_input_and_request_response()
+                )  # This will call create_response
             return True
         except Exception as e:
-            logger.error(f"Error sending conversation.item.create: {e}", exc_info=True)
+            logger.error(
+                f"Error sending conversation.item.create for text: {e}", exc_info=True
+            )
             return False
 
-    async def create_response(
-        self, response_data: Optional[Dict[str, Any]] = None
-    ) -> bool:
+    async def finalize_input_and_request_response(self) -> bool:
         """
-        Requests the creation of a new response from the server.
-        `response_data` can specify modalities, e.g., `{"modalities": ["text", "audio"]}`.
-        If None, defaults are used by the API.
+        Signals that all audio for the current turn has been sent and requests a response.
+        For OpenAI, this commits the audio buffer and then creates a response.
         """
         conn = await self._get_active_conn()
         if not conn:
-            logger.error("Cannot create response: Not connected.")
+            logger.error("Cannot finalize input and request response: Not connected.")
             return False
         try:
+            # Commit audio buffer
+            await conn.input_audio_buffer.commit()
+            logger.info("Sent input_audio_buffer.commit")
+
+            # Create response
+            # response_data can be specified in service_config or passed if needed
+            response_data = self._service_config.get("response_creation_data")
             await conn.response.create(response=response_data or {})
             logger.info(f"Sent response.create (data: {response_data or {}})")
             return True
         except Exception as e:
-            logger.error(f"Error sending response.create: {e}", exc_info=True)
+            logger.error(
+                f"Error in finalize_input_and_request_response: {e}", exc_info=True
+            )
             return False
 
-    async def cancel_response(self, response_id: Optional[str] = None) -> bool:
+    async def cancel_ongoing_response(self) -> bool:
         """
-        Sends a request to cancel an in-progress response.
-        If `response_id` is None, the server attempts to cancel the default/current response.
+        Attempts to cancel any AI response currently being generated or streamed.
         """
         conn = await self._get_active_conn()
         if not conn:
@@ -167,17 +269,26 @@ class OpenAIRealtimeManager:
 
         # The OpenAI library example `push_to_talk_app.py` uses `connection.send` for this.
         # `connection.send` takes a dictionary.
+        # The response_id might be tracked by AudioManager or VoiceCog if needed.
+        # For now, sending a general cancel.
+        response_id_to_cancel = (
+            self._audio_manager.get_current_playing_response_id()
+        )  # Use self._audio_manager
+
         payload: Dict[str, Any] = {"type": "response.cancel"}
-        if response_id:
-            payload["response_id"] = response_id
+        if response_id_to_cancel:
+            # The OpenAI API expects the response_id of the response being generated,
+            # not the stream_id used by AudioManager.
+            # This needs careful mapping if response_id is available.
+            # Assuming for now that if audio_manager has a response_id, it's the one to cancel.
+            payload["response_id"] = response_id_to_cancel
+            # This assumes get_current_playing_response_id() returns the actual OpenAI response_id
 
         try:
-            # Assuming `conn.send` is available and is the correct method as per library examples
-            # for messages not covered by specific helper methods.
             await conn.send(payload)
             logger.info(f"Sent response.cancel (payload: {payload})")
             return True
-        except AttributeError:
+        except AttributeError:  # Should not happen with official library
             logger.error(
                 "The 'send' method is not available on the connection object. "
                 "This method for cancelling responses might need updating based on library capabilities."
@@ -187,91 +298,22 @@ class OpenAIRealtimeManager:
             logger.error(f"Error sending response.cancel: {e}", exc_info=True)
             return False
 
-    # --- Lifecycle Management ---
+    # --- Old methods to be removed or adapted ---
+    # send_session_update, original send_audio_chunk, commit_audio_buffer,
+    # send_conversation_item, create_response, original cancel_response
+    # start, stop, ensure_connected, original is_connected
 
-    async def start(self) -> None:
-        """
-        Starts the connection to OpenAI Realtime API and the event processing loop.
-        This method is idempotent; it won't start a new connection if one is already active or starting.
-        The actual connection and event loop are managed by `OpenAIRealtimeConnection`,
-        which creates its own background task.
-        """
-        logger.info("OpenAIRealtimeManager: Attempting to start connection...")
-        if self.connection_handler.is_connected():
-            logger.info("OpenAIRealtimeManager: Connection is already active.")
-            return
+    # The following methods are effectively replaced by the interface methods.
+    # If any specific internal logic from them is needed, it's merged into the interface methods.
 
-        # OpenAIRealtimeConnection.connect is designed to be idempotent and manages its own task.
-        # We pass the event handler's dispatch method as the callback.
-        await self.connection_handler.connect(self.event_handler_adapter.dispatch_event)
-        # The _main_task in this manager isn't strictly necessary if connection_handler manages its own task
-        # and provides sufficient status. For now, we assume connection_handler.connect() is non-blocking
-        # in terms of starting its internal task.
-        logger.info(
-            "OpenAIRealtimeManager: Connection process initiated via connection_handler."
-        )
-
-    async def stop(self) -> None:
-        """
-        Stops the connection to OpenAI Realtime API and cleans up resources.
-        """
-        logger.info("OpenAIRealtimeManager: Attempting to stop connection...")
-        await self.connection_handler.disconnect()
-        # The OpenAIRealtimeConnection.disconnect() method handles waiting for its internal task.
-        logger.info("OpenAIRealtimeManager: Connection stopped via connection_handler.")
-
-    async def ensure_connected(self, timeout: float = 30.0) -> bool:
-        """
-        Ensures the connection to OpenAI Realtime API is active.
-        If not connected, it attempts to start the connection and waits for it to establish.
-
-        Args:
-            timeout: Maximum time in seconds to wait for the connection to establish.
-
-        Returns:
-            True if the connection is active or successfully established, False otherwise.
-        """
-        if self.is_connected():
-            logger.debug("ensure_connected: Already connected.")
-            return True
-
-        logger.info(
-            "ensure_connected: Not connected. Attempting to start and connect..."
-        )
-        await self.start()  # Initiates the connection process
-
-        # Wait for the connection to be established
-        # This loop polls the is_connected status.
-        # A more sophisticated approach might involve an asyncio.Event signaled by OpenAIRealtimeConnection.
-        wait_interval = 0.1  # seconds
-        max_attempts = int(timeout / wait_interval)
-
-        for attempt in range(max_attempts):
-            if self.is_connected():
-                logger.info("ensure_connected: Connection successfully established.")
-                return True
-            if attempt < max_attempts - 1:  # Don't sleep on the last attempt
-                await asyncio.sleep(wait_interval)
-            else:  # Log before final check
-                logger.debug(
-                    f"ensure_connected: Waited {timeout}s, final connection check."
-                )
-
-        if self.is_connected():  # Final check after loop
-            logger.info(
-                "ensure_connected: Connection successfully established (checked after loop)."
-            )
-            return True
-
-        logger.warning(
-            f"ensure_connected: Failed to establish connection within {timeout}s timeout."
-        )
-        return False
-
-    def is_connected(self) -> bool:
-        """Checks if the underlying connection handler reports being connected."""
-        return self.connection_handler.is_connected()
-
-    # TODO: Add health metrics similar to WebSocketManager if needed
-    # async def get_health_metrics(self) -> dict:
-    #     ...
+    # Original send_session_update - logic moved to connect() for initial setup
+    # Original send_audio_chunk - logic moved to new send_audio_chunk(self, audio_data: bytes)
+    # Original commit_audio_buffer - logic moved to finalize_input_and_request_response
+    # Original send_conversation_item - can be used by send_text_message or kept as helper
+    # Original create_response - logic moved to finalize_input_and_request_response
+    # Original cancel_response - logic moved to cancel_ongoing_response
+    # Original start - logic moved to connect()
+    # Original stop - logic moved to disconnect()
+    # Original ensure_connected - this specific pattern is not directly part of the interface.
+    # VoiceCog will call connect() if not is_connected().
+    # Original is_connected - replaced by parent's implementation using _is_connected_flag

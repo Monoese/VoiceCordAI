@@ -98,7 +98,7 @@ class AudioManager:
             # data.pcm might be None or empty if silence is received from Discord
             # or during specific discord.py internal states.
             if data.pcm:
-                self.audio_data.extend(data.pcm)  # Append new PCM data
+                self.audio_data.extend(data.pcm)
                 self.total_bytes += len(data.pcm)
                 logger.debug(
                     f"PCM16Sink.write: Adding {len(data.pcm)} bytes. Total accumulated: {self.total_bytes} bytes"
@@ -130,24 +130,27 @@ class AudioManager:
         """
         return self.PCM16Sink()
 
-    async def ffmpeg_to_24k_mono(self, raw: bytes) -> bytes:
+    async def resample_and_convert_audio(
+        self,
+        raw_audio_data: bytes,
+        target_sample_rate: int = Config.PROCESSING_AUDIO_FRAME_RATE,
+        target_channels: int = Config.PROCESSING_AUDIO_CHANNELS,
+    ) -> bytes:
         """
-        Executes FFmpeg to resample and convert raw audio input from 48kHz stereo
-        to 24kHz mono. Utilizes an asynchronous subprocess execution to call FFmpeg
-        with specified parameters. The input audio is received as raw bytes, processed
-        through FFmpeg, and the resulting audio output is returned as raw bytes.
+        Executes FFmpeg to resample and convert raw audio input to a target format.
+        Defaults to converting to the application's standard processing format (e.g., 24kHz mono).
+        Utilizes an asynchronous subprocess execution to call FFmpeg.
 
-        Parameters:
-        raw: bytes
-            Raw audio data to be processed by FFmpeg.
+        Args:
+            raw_audio_data: Raw audio data (bytes) to be processed.
+            target_sample_rate: The desired sample rate for the output audio.
+            target_channels: The desired number of channels for the output audio (e.g., 1 for mono).
 
         Returns:
-        bytes
-            The processed audio data converted to 24kHz mono.
+            bytes: The processed audio data in the target format.
 
         Raises:
-        RuntimeError
-            If FFmpeg fails or returns a non-zero exit code.
+            RuntimeError: If FFmpeg fails or returns a non-zero exit code.
         """
         cmd = [
             "ffmpeg",
@@ -165,13 +168,9 @@ class AudioManager:
             "-f",
             Config.FFMPEG_PCM_FORMAT,  # Output format
             "-ar",
-            str(
-                Config.PROCESSING_AUDIO_FRAME_RATE
-            ),  # Output sample rate for processing
+            str(target_sample_rate),  # Output sample rate for processing
             "-ac",
-            str(
-                Config.PROCESSING_AUDIO_CHANNELS
-            ),  # Output channels for processing (mono)
+            str(target_channels),  # Output channels for processing (mono)
             "pipe:1",  # Output to stdout pipe
         ]
         proc = await asyncio.create_subprocess_exec(
@@ -180,7 +179,7 @@ class AudioManager:
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
         )
-        out, err = await proc.communicate(raw)
+        out, err = await proc.communicate(raw_audio_data)
         if proc.returncode != 0:
             raise RuntimeError("ffmpeg failed: " + err.decode().strip())
         return out
@@ -232,7 +231,7 @@ class AudioManager:
         logger.info(
             f"AudioManager: New target audio stream set to '{self._current_stream_id}'"
         )
-        self._playback_control_event.set()  # Wake up playback_loop to handle the new stream
+        self._playback_control_event.set()
 
     async def add_audio_chunk(self, audio_chunk: bytes):
         """Adds an audio chunk to the queue for the stream identified by `_current_stream_id`."""
@@ -266,7 +265,7 @@ class AudioManager:
         await self.audio_chunk_queue.put(
             (stream_id_to_end, None)
         )  # (stream_id, None) is the EOS marker
-        self._playback_control_event.set()  # Wake up playback_loop to process the EOS if it's idle
+        self._playback_control_event.set()
 
     def _prepare_new_playback_stream(self, stream_id: str) -> _PlaybackStream:
         """Prepares OS pipes and FFmpegPCMAudio source for a new playback stream."""
@@ -308,7 +307,7 @@ class AudioManager:
                     logger.info(
                         f"Feeder for '{feeder_stream_id}': Cancelled while waiting for queue item."
                     )
-                    raise  # Propagate cancellation
+                    raise
 
                 if item_stream_id != feeder_stream_id:
                     logger.warning(
@@ -324,8 +323,8 @@ class AudioManager:
                         logger.info(
                             f"Feeder for '{feeder_stream_id}': Global target stream changed to '{self._current_stream_id}'. Stopping this feeder."
                         )
-                        break  # Exit loop, leading to cleanup
-                    continue  # Wait for the next relevant item
+                        break
+                    continue
 
                 if (
                     item_data is None
@@ -334,7 +333,7 @@ class AudioManager:
                         f"Feeder for '{feeder_stream_id}': EOS marker received."
                     )
                     self.audio_chunk_queue.task_done()
-                    break  # Exit loop, signaling end of this stream to FFmpeg via pipe closure
+                    break
 
                 # Defensive check: If the global target stream ID has changed *while this feeder was processing*,
                 # it should stop to prevent feeding data to a potentially obsolete FFmpeg process.
@@ -342,7 +341,7 @@ class AudioManager:
                     logger.info(
                         f"Feeder for '{feeder_stream_id}': Global target stream '{self._current_stream_id}' no longer matches. Stopping feeder."
                     )
-                    self.audio_chunk_queue.task_done()  # Mark current item as "processed" before exiting
+                    self.audio_chunk_queue.task_done()
                     break
 
                 try:

@@ -41,8 +41,19 @@ bot_state_manager: BotState = BotState()
 # --- Set up OpenAI Realtime API Communication Layer ---
 # The OpenAIRealtimeManager internally creates its own event handler adapter (OpenAIEventHandlerAdapter)
 # and connection handler (OpenAIRealtimeConnection).
+
+# Define service_config for OpenAI
+openai_service_config = {
+    "api_key": Config.OPENAI_API_KEY,  # Explicitly pass, though manager defaults to it
+    "initial_session_data": {
+        "turn_detection": None
+    },  # Example initial config for OpenAI
+    "connection_timeout": 30.0,  # Example timeout for connection
+    # "response_creation_data": {"modalities": ["text", "audio"]} # Example for response creation
+}
+
 openai_realtime_manager: OpenAIRealtimeManager = OpenAIRealtimeManager(
-    audio_manager=audio_manager
+    audio_manager=audio_manager, service_config=openai_service_config
 )
 
 # --- Configure Discord Bot ---
@@ -66,7 +77,7 @@ async def main():
             bot=bot,
             audio_manager=audio_manager,
             bot_state_manager=bot_state_manager,
-            openai_realtime_manager=openai_realtime_manager,
+            ai_service_manager=openai_realtime_manager,
         )
         await bot.add_cog(voice_cog_instance)
         logger.info("VoiceCog loaded and added to the bot.")
