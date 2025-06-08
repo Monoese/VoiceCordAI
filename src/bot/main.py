@@ -11,6 +11,7 @@ The bot is configured to use the VoiceCog for handling voice-related commands an
 """
 
 import asyncio
+from typing import Dict  # Added import
 
 import discord
 from discord.ext import commands
@@ -21,14 +22,15 @@ from src.config.config import Config
 from src.state.state import BotState
 from src.utils.logger import get_logger
 
+# Import both managers
 from src.openai_adapter.manager import OpenAIRealtimeManager
+from src.gemini_adapter.manager import GeminiRealtimeManager  # Added import
+from src.ai_services.interface import IRealtimeAIServiceManager  # For type hinting
 
 
 # Configure discord.py's internal logging.
 # root=False prevents it from reconfiguring the root logger we set up in src.utils.logger.
-discord.utils.setup_logging(
-    level=Config.LOG_CONSOLE_LEVEL, root=False
-)
+discord.utils.setup_logging(level=Config.LOG_CONSOLE_LEVEL, root=False)
 
 logger = get_logger(__name__)
 
@@ -36,14 +38,30 @@ logger = get_logger(__name__)
 audio_manager: AudioManager = AudioManager()
 bot_state_manager: BotState = BotState()
 
-# --- Set up OpenAI Realtime API Communication Layer ---
-# The OpenAIRealtimeManager internally creates its own event handler adapter (OpenAIEventHandlerAdapter)
-# and connection handler (OpenAIRealtimeConnection).
-
-# OpenAI service configuration is now sourced from Config.OPENAI_SERVICE_CONFIG
-openai_realtime_manager: OpenAIRealtimeManager = OpenAIRealtimeManager(
+# --- Set up AI Service Communication Layer ---
+# Instantiate all available AI service managers
+openai_manager = OpenAIRealtimeManager(
     audio_manager=audio_manager, service_config=Config.OPENAI_SERVICE_CONFIG
 )
+gemini_manager = GeminiRealtimeManager(
+    audio_manager=audio_manager, service_config=Config.GEMINI_SERVICE_CONFIG
+)
+
+# Store them in a dictionary for VoiceCog
+all_ai_service_managers: Dict[str, IRealtimeAIServiceManager] = {
+    "openai": openai_manager,
+    "gemini": gemini_manager,
+}
+
+# Validate that the default provider from Config is in our dictionary
+if Config.AI_SERVICE_PROVIDER not in all_ai_service_managers:
+    logger.error(
+        f"Default AI_SERVICE_PROVIDER '{Config.AI_SERVICE_PROVIDER}' is not a configured manager. Available: {list(all_ai_service_managers.keys())}. Exiting."
+    )
+    raise SystemExit(
+        f"Invalid default AI_SERVICE_PROVIDER: {Config.AI_SERVICE_PROVIDER}"
+    )
+
 
 # --- Configure Discord Bot ---
 # Intents.all() enables all privileged intents; for production, specify only needed intents.
@@ -66,7 +84,7 @@ async def main():
             bot=bot,
             audio_manager=audio_manager,
             bot_state_manager=bot_state_manager,
-            ai_service_manager=openai_realtime_manager,
+            ai_service_managers=all_ai_service_managers,  # Pass the dictionary of managers
         )
         await bot.add_cog(voice_cog_instance)
         logger.info("VoiceCog loaded and added to the bot.")

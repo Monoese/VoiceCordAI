@@ -1,10 +1,11 @@
 # VoiceCordAI - Discord Voice Chat Bot
 
-A Discord bot that enables real-time voice conversations between users and OpenAI's GPT-4 API. Users can engage in natural voice interactions with the AI through Discord voice channels.
+A Discord bot that enables real-time voice conversations between users and various AI services, including OpenAI's GPT-4 and Google's Gemini. Users can engage in natural voice interactions with the selected AI through Discord voice channels.
 
 ## Features
 
-- Talk with GPT-4 in real-time using your voice
+- Talk with AI (OpenAI GPT-4, Google Gemini) in real-time using your voice
+- Switch between different AI service providers
 - Works directly in Discord voice channels
 - Easy to control using emoji reactions
 - Includes error handling and activity logging
@@ -16,6 +17,7 @@ Before you start, make sure you have:
 - FFmpeg installed (on windows, you can get it installed using winget by running: winget install -e --id Gyan.FFmpeg)
 - A Discord Bot Token (from Discord Developer Portal)
 - An OpenAI API Key (from OpenAI dashboard: platform.openai.com/api-keys)
+- A Google Gemini API Key (from Google AI Studio: aistudio.google.com/app/apikey)
 - Invited your bot to your Discord server with permissions to: Connect, Speak, Read Messages/View Channels, and Use Voice Activity.
 
 ## Step-by-Step Installation Guide
@@ -67,6 +69,7 @@ Before you start, make sure you have:
    ```
    DISCORD_TOKEN=your_discord_token
    OPENAI_API_KEY=your_openai_api_key
+   GEMINI_API_KEY=your_gemini_api_key
    ```
 
 ## Starting the Bot
@@ -87,11 +90,12 @@ Before you start, make sure you have:
    ```
 
 2. **Available Commands**
-   - `/connect` - Joins your current voice channel, connects to the AI service, and prepares for voice interaction (standby mode).
+   - `/connect` - Joins your current voice channel, connects to the currently selected AI service, and prepares for voice interaction (standby mode).
+   - `/set <service_provider>` - Sets the AI service provider to use. Options: `openai` or `gemini`. Example: `/set openai`
    - `/disconnect` - Leaves the voice channel, disconnects from the AI service, and resets the bot to an idle state.
 
 3. **Voice Controls**
-   After using `/connect`, the bot will send a message. React to this message to control recording:
+   After using `/connect`, the bot will send a message indicating the active AI provider. React to this message to control recording:
    - React with 🎙️ to start recording your voice.
    - React with 🎙️ again to stop recording and send your audio for processing.
    - React with ❌ to cancel the current recording without sending it.
@@ -105,6 +109,7 @@ If you run into any issues, make sure:
 
 ## Acknowledgments
 
-- [OpenAI GPT-4 Realtime API](https://platform.openai.com/docs/guides/realtime)
+- [OpenAI API](https://platform.openai.com/docs/guides/gpt)
+- [Google Gemini API](https://ai.google.dev/docs/gemini_api_overview)
 - [discord.py](https://discordpy.readthedocs.io/)
 - [discord-ext-voice-recv](https://github.com/imayhaveborkedit/discord-ext-voice-recv)

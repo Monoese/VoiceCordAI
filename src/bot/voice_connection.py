@@ -73,6 +73,21 @@ class VoiceConnectionManager:
             if self.voice_client and self.voice_client.is_connected():
                 if self._playback_task is None or self._playback_task.done():
                     logger.info("Starting new playback loop task.")
+                    # --- Temporary Debug Prints ---
+                    logger.debug(
+                        f"VOICE_CONNECTION_DEBUG: Type of self.audio_manager: {type(self.audio_manager)}"
+                    )
+                    logger.debug(
+                        f"VOICE_CONNECTION_DEBUG: Is self.audio_manager None? {self.audio_manager is None}"
+                    )
+                    if self.audio_manager:
+                        logger.debug(
+                            f"VOICE_CONNECTION_DEBUG: Attributes of self.audio_manager: {dir(self.audio_manager)}"
+                        )
+                        logger.debug(
+                            f"VOICE_CONNECTION_DEBUG: Does it have playback_loop? {'playback_loop' in dir(self.audio_manager)}"
+                        )
+                    # --- End Temporary Debug Prints ---
                     self._playback_task = self.bot.loop.create_task(
                         self.audio_manager.playback_loop(self.voice_client)
                     )

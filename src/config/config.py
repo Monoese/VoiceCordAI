@@ -96,13 +96,56 @@ class Config:
         # "response_creation_data": OPENAI_SERVICE_RESPONSE_CREATION_DATA # Uncomment if using the above
     }
 
+    # --- Gemini Configuration ---
+    GEMINI_API_KEY: Optional[str] = os.getenv("GEMINI_API_KEY")
+    GEMINI_REALTIME_MODEL_NAME: str = os.getenv(
+        "GEMINI_REALTIME_MODEL_NAME",
+        "models/gemini-2.5-flash-preview-native-audio-dialog",  # Default from example
+    )
+    # Default LiveConnectConfig parameters, can be overridden by environment or specific needs
+    GEMINI_DEFAULT_LIVE_CONNECT_CONFIG: Dict[str, Any] = {
+        "response_modalities": ["AUDIO"],  # Expect audio responses
+        "media_resolution": "MEDIA_RESOLUTION_MEDIUM",  # Default from example
+        "speech_config": {  # Default from example
+            "voice_config": {"prebuilt_voice_config": {"voice_name": "Zephyr"}}
+        },
+        "context_window_compression": {  # Default from example
+            "trigger_tokens": 25600,
+            "sliding_window": {"target_tokens": 12800},
+        },
+    }
+    # GEMINI_SERVICE_CONFIG can be customized further if needed, e.g., via JSON string in env var
+    GEMINI_SERVICE_CONFIG: Dict[str, Any] = {
+        "api_key": GEMINI_API_KEY,
+        "model_name": GEMINI_REALTIME_MODEL_NAME,
+        "live_connect_config": GEMINI_DEFAULT_LIVE_CONNECT_CONFIG,
+        "connection_timeout": 30.0,  # Example connection timeout for Gemini
+    }
+
+    # --- AI Service Provider Selection ---
+    # Determines which AI service manager to use ("openai" or "gemini")
+    AI_SERVICE_PROVIDER: str = os.getenv("AI_SERVICE_PROVIDER", "gemini").lower()
+
     @classmethod
     def validate(cls) -> None:
         """Validate required configuration variables."""
         if not cls.DISCORD_TOKEN:
             raise ConfigError("DISCORD_TOKEN environment variable not set or empty.")
-        if not cls.OPENAI_API_KEY:
-            raise ConfigError("OPENAI_API_KEY environment variable not set or empty.")
+
+        if cls.AI_SERVICE_PROVIDER == "openai":
+            if not cls.OPENAI_API_KEY:
+                raise ConfigError(
+                    "OPENAI_API_KEY environment variable not set or empty (required for OpenAI service)."
+                )
+        elif cls.AI_SERVICE_PROVIDER == "gemini":
+            if not cls.GEMINI_API_KEY:
+                raise ConfigError(
+                    "GEMINI_API_KEY environment variable not set or empty (required for Gemini service)."
+                )
+        else:
+            raise ConfigError(
+                f"Unsupported AI_SERVICE_PROVIDER: {cls.AI_SERVICE_PROVIDER}. Must be 'openai' or 'gemini'."
+            )
 
 
 Config.validate()  # Validate configuration on import

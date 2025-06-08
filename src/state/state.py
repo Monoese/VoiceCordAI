@@ -63,6 +63,9 @@ class BotState:
         self._standby_message: Optional[Message] = (
             None  # The Discord message used for UI
         )
+        self._active_ai_provider_name: str = (
+            Config.AI_SERVICE_PROVIDER
+        )  # Initialize with default
 
     @property
     def current_state(self) -> BotStateEnum:
@@ -104,6 +107,22 @@ class BotState:
         """
         return self._standby_message
 
+    @property
+    def active_ai_provider_name(self) -> str:
+        """
+        Get the name of the currently active AI service provider.
+        """
+        return self._active_ai_provider_name
+
+    async def set_active_ai_provider_name(self, provider_name: str) -> None:
+        """
+        Set the name of the active AI service provider and update the standby message.
+        Args:
+            provider_name: The name of the provider (e.g., "openai", "gemini").
+        """
+        self._active_ai_provider_name = provider_name
+        await self._update_message()  # Update UI to reflect the change
+
     def get_message_content(self) -> str:
         """
         Generate the standby message content based on the current state.
@@ -127,6 +146,9 @@ class BotState:
                 f"- **Action**: Please try `{Config.COMMAND_PREFIX}disconnect` and then `{Config.COMMAND_PREFIX}connect` again.\n"
                 f"If the issue persists, contact an administrator.\n"
                 f"---\n"
+                f"### 🤖 AI Provider:\n"
+                f"> Active Service: `{self.active_ai_provider_name.upper()}`\n"
+                f"---\n"
                 f"### 🧑 Authority User:\n"
                 f"> `{self._authority_user_name}` can control the recording actions (if applicable)."
             )
@@ -138,9 +160,13 @@ class BotState:
             f"1. **Start Recording**: React to this message with 🎙 to start recording.\n"
             f"2. **Finish Recording**: Remove your 🎙 reaction to finish recording.\n"
             f"3. **End Session**: Use `{Config.COMMAND_PREFIX}disconnect` to end the session.\n"
+            f"4. **Switch AI**: Use `{Config.COMMAND_PREFIX}set_provider <name>` (e.g., openai, gemini).\n"
             f"---\n"
             f"### 🛠 Current State:\n"
             f"- **State**: `{self._current_state.value}`\n"
+            f"---\n"
+            f"### 🤖 AI Provider:\n"
+            f"> Active Service: `{self.active_ai_provider_name.upper()}`\n"
             f"---\n"
             f"### 🧑 Authority User:\n"
             f"> `{self._authority_user_name}` can control the recording actions."

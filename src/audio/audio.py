@@ -56,6 +56,9 @@ class AudioManager:
         # *expecting* to receive chunks for or has been told to start.
         # This is set by start_new_audio_stream().
         self._current_stream_id: Optional[str] = None
+        self._eos_queued_for_streams: set[str] = (
+            set()
+        )  # Tracks streams for which EOS has been queued
         logger.debug("AudioManager initialized for streaming playback.")
 
     class PCM16Sink(voice_recv.AudioSink):
@@ -216,14 +219,14 @@ class AudioManager:
         Signals the playback_loop to prepare for a new audio stream.
         If another stream is active, an EOS marker is queued for it.
         """
-        if self._current_stream_id is not None and self._current_stream_id != stream_id:
+        previous_stream_id = self._current_stream_id
+        if previous_stream_id is not None and previous_stream_id != stream_id:
             logger.warning(
-                f"AudioManager: Request to start new stream '{stream_id}' while '{self._current_stream_id}' is active. "
-                f"Signaling EOS for previous stream '{self._current_stream_id}'."
+                f"AudioManager: Request to start new stream '{stream_id}' while '{previous_stream_id}' is active. "
+                f"Signaling EOS for previous stream '{previous_stream_id}'."
             )
-            # Queue EOS for the old stream. The playback_loop and its feeder task
-            # for the old stream will handle this to terminate gracefully.
-            await self.audio_chunk_queue.put((self._current_stream_id, None))
+            # Use the idempotent end_audio_stream to signal the end of the previous stream.
+            await self.end_audio_stream(stream_id_override=previous_stream_id)
             # The playback_loop, when it awakens, will see the new _current_stream_id
             # and transition by cleaning up the old stream processor and starting a new one.
 
@@ -246,26 +249,41 @@ class AudioManager:
             f"AudioManager: Added chunk of {len(audio_chunk)} bytes to queue for stream {current_target_stream_id}"
         )
 
-    async def end_audio_stream(self):
+    async def end_audio_stream(self, stream_id_override: Optional[str] = None):
         """
-        Signals the end of the audio stream identified by `_current_stream_id`
-        by placing an EOS (None) marker into the `audio_chunk_queue`.
+        Signals the end of an audio stream by placing an EOS (None) marker into the queue.
+        If stream_id_override is provided, it attempts to end that specific stream.
+        Otherwise, it attempts to end the stream identified by `_current_stream_id`.
+        This method is idempotent: it will only queue an EOS once for a given stream ID
+        during its active lifecycle (until it's fully cleaned up).
         """
-        stream_id_to_end = self._current_stream_id
+        target_stream_id = (
+            stream_id_override
+            if stream_id_override is not None
+            else self._current_stream_id
+        )
 
-        if stream_id_to_end is None:
+        if target_stream_id is None:
             logger.info(
-                "AudioManager.end_audio_stream: No target stream (_current_stream_id is None) to end."
+                f"AudioManager.end_audio_stream: No target stream to end (target_stream_id is None). "
+                f"Provided override: {stream_id_override}, _current_stream_id: {self._current_stream_id}"
+            )
+            return
+
+        if target_stream_id in self._eos_queued_for_streams:
+            logger.info(
+                f"AudioManager.end_audio_stream: EOS already signaled for stream '{target_stream_id}'. Ignoring duplicate request."
             )
             return
 
         logger.info(
-            f"AudioManager: Signaling end of audio stream '{stream_id_to_end}' by queueing EOS."
+            f"AudioManager: Signaling end of audio stream '{target_stream_id}' by queueing EOS."
         )
         await self.audio_chunk_queue.put(
-            (stream_id_to_end, None)
+            (target_stream_id, None)
         )  # (stream_id, None) is the EOS marker
-        self._playback_control_event.set()
+        self._eos_queued_for_streams.add(target_stream_id)
+        self._playback_control_event.set()  # Signal playback loop to check state
 
     def _prepare_new_playback_stream(self, stream_id: str) -> _PlaybackStream:
         """Prepares OS pipes and FFmpegPCMAudio source for a new playback stream."""
@@ -429,12 +447,22 @@ class AudioManager:
         # - stream_to_cleanup.pipe_read_fd is closed by ffmpeg_audio_source.cleanup().
         # Explicit os.close() calls here would be redundant and could cause errors if FDs are already closed.
 
+        # Only clear _current_stream_id if it still refers to the stream being cleaned up.
+        # This prevents a race condition where a new stream might have been started
+        # and _current_stream_id updated, then this cleanup for an old stream
+        # incorrectly nullifies it.
         if self._current_stream_id == stream_id:
             logger.info(
                 f"AudioManager: Cleared _current_stream_id '{self._current_stream_id}' as its playback and cleanup finished."
             )
             self._current_stream_id = None
+        else:
+            logger.info(
+                f"AudioManager: Stream '{stream_id}' cleanup finished, but _current_stream_id is now '{self._current_stream_id}'. Not clearing _current_stream_id."
+            )
 
+        # Remove from the set tracking EOS-queued streams as this stream is now fully processed.
+        self._eos_queued_for_streams.discard(stream_id)
         logger.info(f"Finished cleaning up stream '{stream_id}'")
 
     async def playback_loop(self, voice_client: voice_recv.VoiceRecvClient) -> None:

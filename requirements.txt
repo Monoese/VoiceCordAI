@@ -5,3 +5,4 @@ pydub
 websockets
 audioop-lts
 openai
+google-genai
