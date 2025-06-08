@@ -11,7 +11,7 @@ validation for required settings.
 import logging
 import os
 from pathlib import Path
-from typing import Optional, Union
+from typing import Optional, Union, Dict, Any
 
 from dotenv import load_dotenv
 
@@ -41,9 +41,10 @@ class Config:
     # API and Server Settings
     DISCORD_TOKEN: Optional[str] = os.getenv("DISCORD_TOKEN")
     OPENAI_API_KEY: Optional[str] = os.getenv("OPENAI_API_KEY")
-    WS_SERVER_URL: str = (  # WebSocket server URL for real-time processing
+    WS_SERVER_URL: str = (  # Specific OpenAI real-time WebSocket URL including a model and date in the query string.
         "wss://api.openai.com/v1/realtime?model=gpt-4o-mini-realtime-preview-2024-12-17"
     )
+    # Name of the OpenAI model for real-time services.
     OPENAI_REALTIME_MODEL_NAME: str = os.getenv(
         "OPENAI_REALTIME_MODEL_NAME", "gpt-4o-mini-realtime-preview"
     )
@@ -78,6 +79,22 @@ class Config:
         5 * 1024 * 1024
     )  # Max size of a log file before rotation (in bytes)
     LOG_BACKUP_COUNT: int = 3  # Number of backup log files to keep
+
+    # OpenAI Service Specific Configuration Components
+    OPENAI_SERVICE_INITIAL_SESSION_DATA: Dict[str, Any] = {
+        "turn_detection": None
+    }  # Example initial config for OpenAI
+    OPENAI_SERVICE_CONNECTION_TIMEOUT: float = 30.0  # Example timeout for connection
+    # OPENAI_SERVICE_RESPONSE_CREATION_DATA: Dict[str, Any] = {"modalities": ["text", "audio"]} # Example for response creation
+
+    # OpenAI Service Configuration Dictionary
+    # This is defined here, within the class, using other class attributes defined above.
+    OPENAI_SERVICE_CONFIG: Dict[str, Any] = {
+        "api_key": OPENAI_API_KEY,
+        "initial_session_data": OPENAI_SERVICE_INITIAL_SESSION_DATA,
+        "connection_timeout": OPENAI_SERVICE_CONNECTION_TIMEOUT,
+        # "response_creation_data": OPENAI_SERVICE_RESPONSE_CREATION_DATA # Uncomment if using the above
+    }
 
     @classmethod
     def validate(cls) -> None:
