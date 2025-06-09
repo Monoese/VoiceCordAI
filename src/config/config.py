@@ -42,7 +42,7 @@ class Config:
     DISCORD_TOKEN: Optional[str] = os.getenv("DISCORD_TOKEN")
     COMMAND_PREFIX: str = os.getenv("COMMAND_PREFIX", "/")  # Prefix for bot commands
     # Determines which AI service manager to use ("openai" or "gemini")
-    AI_SERVICE_PROVIDER: str = os.getenv("AI_SERVICE_PROVIDER", "gemini").lower()
+    AI_SERVICE_PROVIDER: str = os.getenv("AI_SERVICE_PROVIDER", "openai").lower()
 
     # --- Voice & Connection Settings ---
     CONNECTION_TIMEOUT: int = (
