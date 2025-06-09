@@ -39,27 +39,49 @@ audio_manager: AudioManager = AudioManager()
 bot_state_manager: BotState = BotState()
 
 # --- Set up AI Service Communication Layer ---
-# Instantiate all available AI service managers
-openai_manager = OpenAIRealtimeManager(
-    audio_manager=audio_manager, service_config=Config.OPENAI_SERVICE_CONFIG
-)
-gemini_manager = GeminiRealtimeManager(
-    audio_manager=audio_manager, service_config=Config.GEMINI_SERVICE_CONFIG
-)
+all_ai_service_managers: Dict[str, IRealtimeAIServiceManager] = {}
 
-# Store them in a dictionary for VoiceCog
-all_ai_service_managers: Dict[str, IRealtimeAIServiceManager] = {
-    "openai": openai_manager,
-    "gemini": gemini_manager,
-}
+if Config.OPENAI_API_KEY:
+    openai_manager = OpenAIRealtimeManager(
+        audio_manager=audio_manager, service_config=Config.OPENAI_SERVICE_CONFIG
+    )
+    all_ai_service_managers["openai"] = openai_manager
+    logger.info("OpenAI Realtime Manager initialized.")
+else:
+    logger.info(
+        "OpenAI API key not found. OpenAI Realtime Manager will not be available."
+    )
 
-# Validate that the default provider from Config is in our dictionary
-if Config.AI_SERVICE_PROVIDER not in all_ai_service_managers:
+if Config.GEMINI_API_KEY:
+    gemini_manager = GeminiRealtimeManager(
+        audio_manager=audio_manager, service_config=Config.GEMINI_SERVICE_CONFIG
+    )
+    all_ai_service_managers["gemini"] = gemini_manager
+    logger.info("Gemini Realtime Manager initialized.")
+else:
+    logger.info(
+        "Gemini API key not found. Gemini Realtime Manager will not be available."
+    )
+
+# Validate that at least one manager was initialized if we proceed
+if not all_ai_service_managers:
     logger.error(
-        f"Default AI_SERVICE_PROVIDER '{Config.AI_SERVICE_PROVIDER}' is not a configured manager. Available: {list(all_ai_service_managers.keys())}. Exiting."
+        "No AI service managers could be initialized. Check API key configurations. Exiting."
     )
     raise SystemExit(
-        f"Invalid default AI_SERVICE_PROVIDER: {Config.AI_SERVICE_PROVIDER}"
+        "No AI service managers available. Please configure at least one API key."
+    )
+
+# Validate that the default provider from Config is in our dictionary and was initialized
+if Config.AI_SERVICE_PROVIDER not in all_ai_service_managers:
+    logger.error(
+        f"Default AI_SERVICE_PROVIDER '{Config.AI_SERVICE_PROVIDER}' is configured, "
+        f"but its API key is missing or the manager could not be initialized. "
+        f"Available managers: {list(all_ai_service_managers.keys())}. Exiting."
+    )
+    raise SystemExit(
+        f"Default AI_SERVICE_PROVIDER '{Config.AI_SERVICE_PROVIDER}' not available. "
+        f"Check API key or ensure it's a valid choice among initialized services."
     )
 
 
