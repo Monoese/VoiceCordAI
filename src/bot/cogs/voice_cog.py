@@ -98,6 +98,7 @@ class VoiceCog(commands.Cog):
         self.voice_connection = VoiceConnectionManager(
             bot=bot,
             audio_manager=audio_manager,
+            bot_state_manager=self.bot_state_manager,
         )
         # BotState.__init__ already sets the active_ai_provider_name from Config.
         # No standby message exists here to update yet.
@@ -198,72 +199,6 @@ class VoiceCog(commands.Cog):
             return
         logger.info("Successfully sent audio and requested response from AI service.")
 
-    async def _establish_voice_and_start_recording(
-        self, reaction: discord.Reaction, user: discord.User
-    ) -> bool:
-        """
-        Establishes voice connection and starts recording via voice_connection.
-
-        This method handles three scenarios:
-        1. Bot is already in a voice channel in the guild.
-        2. User is in a voice channel, and the bot needs to connect.
-        3. Neither the bot nor the user is in a voice channel.
-
-        It attempts to start recording using `self.voice_connection.start_recording()`.
-        Sends messages to the reaction's channel on failure.
-
-        Args:
-            reaction: The reaction that triggered the action.
-            user: The user who added the reaction.
-
-        Returns:
-            bool: True if voice connection was established and recording started successfully, False otherwise.
-        """
-        # Scenario 1: Bot is already in a voice channel in this guild
-        if reaction.message.guild and reaction.message.guild.voice_client:
-            self.voice_connection.voice_client = reaction.message.guild.voice_client
-            if not self.voice_connection.start_recording():
-                logger.warning("Failed to start recording with existing voice client.")
-                return False
-        # Scenario 2: User is in a voice channel, bot needs to connect
-        elif user.voice and user.voice.channel:
-            try:
-                logger.info(
-                    f"User {user.name} is in voice channel {user.voice.channel.name}. Bot connecting."
-                )
-                if not await self.voice_connection.connect_to_channel(
-                    user.voice.channel
-                ):
-                    logger.error("Failed to connect to voice channel.")
-                    await reaction.message.channel.send(
-                        "Could not join your voice channel to start recording."
-                    )
-                    return False
-
-                if not self.voice_connection.start_recording():
-                    logger.error("Failed to start recording after connecting.")
-                    await reaction.message.channel.send(
-                        "Could not start recording in your voice channel."
-                    )
-                    return False
-                logger.info("Connected to voice and started new recording session.")
-            except Exception as e:
-                logger.error(f"Error connecting to voice channel for recording: {e}")
-                await reaction.message.channel.send(
-                    "Could not join your voice channel to start recording."
-                )
-                return False
-        # Scenario 3: Neither bot nor user is in a voice channel
-        else:
-            logger.warning(
-                "Bot is not connected to a voice channel in this guild, and user is not in a voice channel."
-            )
-            await reaction.message.channel.send(
-                "You need to be in a voice channel, or the bot needs to be in one, to start recording."
-            )
-            return False
-        return True
-
     @commands.Cog.listener()
     async def on_reaction_add(
         self, reaction: discord.Reaction, user: discord.User
@@ -331,17 +266,30 @@ class VoiceCog(commands.Cog):
                     "Failed to send cancel_ongoing_response. Continuing with recording..."
                 )
 
-            if await self.bot_state_manager.start_recording(user):
-                # Attempt to establish voice connection and start recording
-                if not await self._establish_voice_and_start_recording(reaction, user):
-                    # If voice setup or initial recording start failed, roll back the recording state
-                    logger.info(
-                        "Rolling back to STANDBY state due to voice/recording setup failure."
-                    )
-                    await self.bot_state_manager.stop_recording()
-                    return  # Exit early as voice/recording setup failed
-                # If successful, recording is now active, and voice is connected.
-                # The state is already RECORDING, and the standby message has been updated.
+            # Attempt to begin recording (handles voice connection, state change, and sink activation)
+            if await self.voice_connection.begin_recording(user):
+                # begin_recording internally calls bot_state_manager.start_recording
+                # and updates the message. If successful, bot is now in RECORDING state.
+                logger.info(f"Successfully started recording for user {user.name} via reaction.")
+                # No explicit message needed here as begin_recording handles state and its UI updates.
+            else:
+                # begin_recording returned False, indicating failure.
+                # Reasons could be: user not in voice, bot couldn't connect, state transition failed, sink failed.
+                # begin_recording handles logging the specific reason and any necessary state rollback.
+                # The Cog should inform the user.
+                logger.warning(f"Failed to start recording for user {user.name} via reaction.")
+                await reaction.message.channel.send(
+                    f"Sorry {user.mention}, I couldn't start recording. "
+                    "Please ensure you are in a voice channel and that I have permissions to join and speak."
+                )
+                # Ensure state is consistent if begin_recording failed after a partial state change
+                # (though begin_recording aims to handle its own rollback).
+                # If bot_state_manager.start_recording was called by begin_recording and then failed,
+                # begin_recording should have called bot_state_manager.stop_recording.
+                # If the state is still RECORDING, it's an unexpected situation.
+                if self.bot_state_manager.current_state == BotStateEnum.RECORDING:
+                     logger.error("Bot state is RECORDING after begin_recording failed. Attempting to revert to STANDBY.")
+                     await self.bot_state_manager.stop_recording() # Attempt to revert to STANDBY
 
         # Handle ❌ reaction to cancel recording
         elif (
@@ -418,8 +366,8 @@ class VoiceCog(commands.Cog):
             return
 
         if self.voice_connection.is_recording():
-            pcm_data = self.voice_connection.stop_recording()
-            logger.info("Stopped listening on reaction remove.")
+            pcm_data = await self.voice_connection.finish_recording()
+            logger.info("Finished recording on reaction remove via finish_recording().")
 
             if pcm_data:
                 # Process the raw PCM data from Discord (likely 48kHz stereo)
@@ -445,9 +393,7 @@ class VoiceCog(commands.Cog):
             else:
                 await reaction.message.channel.send("No audio data was captured.")
 
-            await (
-                self.bot_state_manager.stop_recording()
-            )  # Transition state back to STANDBY
+            # self.bot_state_manager.stop_recording() is now called within self.voice_connection.finish_recording()
         else:
             # This case might occur if recording was stopped by other means before reaction removal
             logger.warning(
@@ -479,16 +425,22 @@ class VoiceCog(commands.Cog):
 
         voice_channel = ctx.author.voice.channel
 
-        # Attempt to connect to voice channel
-        if not await self.voice_connection.connect_to_channel(voice_channel):
-            await ctx.send("Failed to connect to the voice channel.")
-            # Even if voice connection fails, attempt to set error state
-            await self.bot_state_manager.enter_connection_error_state()
-            # Send a follow-up message if state changed and standby message exists
-            if self.bot_state_manager.standby_message:
-                await self.bot_state_manager.standby_message.channel.send(
-                    "Bot entered error state due to voice connection failure."
-                )
+        # Attempt to establish the session (connects to voice and initializes standby)
+        if not await self.voice_connection.establish_session(voice_channel, ctx):
+            # establish_session logs errors and BotState handles messages for existing activity.
+            # If connect_to_channel within establish_session fails, it returns False.
+            # If initialize_standby fails (e.g. already active), it returns False.
+            # We might want to send a generic failure message here if establish_session returns False
+            # for a reason other than "already active", which BotState would have messaged.
+            # For now, assume establish_session handles user feedback or logs sufficiently.
+            logger.info(f"Failed to establish session for {ctx.author.name} in {voice_channel.name}.")
+            # If establish_session failed due to voice connection, it doesn't transition to error state itself.
+            # If it failed due to initialize_standby (e.g. already active), that's not an error.
+            # Let's check voice connection explicitly here if establish_session failed.
+            if not self.voice_connection.is_connected():
+                await self.bot_state_manager.enter_connection_error_state()
+                await ctx.send("Failed to connect to the voice channel and establish session.")
+            # If it failed because it's already active, initialize_standby would have sent a message.
             return
 
         # Attempt to connect to AI Service
@@ -512,26 +464,16 @@ class VoiceCog(commands.Cog):
 
         # Initial session update logic is now part of ai_service_manager.connect()
 
-        # Final check before initializing standby
+        # Final check after AI service connection attempt
         if await self._check_and_handle_connection_issues(ctx):
             # _check_and_handle_connection_issues already sends a message if ctx is provided
             return
 
-        # Set the active provider in bot state when connecting initially.
-        # This will also update the message if one exists, though initialize_standby will create it.
-        await self.bot_state_manager.set_active_ai_provider_name(
-            Config.AI_SERVICE_PROVIDER
-        )
-
-        if not await self.bot_state_manager.initialize_standby(ctx):
-            current_state_val = self.bot_state_manager.current_state.value
-            await ctx.send(
-                f"Bot is already active in state '{current_state_val}', but connection steps were performed if applicable."
-            )
-        # else:
-        # initialize_standby creates the message with the correct provider name.
-        # set_active_ai_provider_name (if it had a message to update) would have already updated it.
-        # No explicit _update_message call needed here.
+        # If establish_session was successful, the bot is in STANDBY state and message is created.
+        # The active AI provider name is already set by BotState.__init__ or by set_provider_command.
+        # establish_session calls initialize_standby which uses the current active_ai_provider_name.
+        # No need to call initialize_standby or set_active_ai_provider_name here again.
+        logger.info(f"Connect command successful for {ctx.author.name}. Bot is in STANDBY.")
 
     @commands.command(name="set")
     async def set_provider_command(self, ctx: commands.Context, provider_name: str):
@@ -643,18 +585,12 @@ class VoiceCog(commands.Cog):
         Args:
             ctx: The command context containing information about the invocation
         """
-        reset_success = await self.bot_state_manager.reset_to_idle()
-        if not reset_success:
-            await ctx.send("Bot was already in idle state or could not be reset.")
-        # else:
-        # await ctx.send("Bot state reset to idle.") # Removed as per user request
+        # Terminate session handles resetting bot state to idle and disconnecting voice.
+        await self.voice_connection.terminate_session()
+        # terminate_session logs its actions. We can send a confirmation if desired.
+        await ctx.send("Session terminated. Bot is now idle and disconnected from voice.")
 
-        disconnected_voice = await self.voice_connection.disconnect()
-        if not disconnected_voice:
-            await ctx.send("Bot was not in a voice channel or failed to disconnect.")
-        # else:
-        # await ctx.send("Disconnected from voice channel.") # Removed as per user request
-
+        # The logic for disconnecting the AI service remains in the cog.
         # If not in a voice channel, it might still be connected to the AI service.
         # Always attempt to stop if it's connected.
         if self.active_ai_service_manager.is_connected():
