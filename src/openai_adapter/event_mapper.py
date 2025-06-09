@@ -106,7 +106,7 @@ class OpenAIEventHandlerAdapter:
         session_details: Optional[Session] = getattr(event, "session", None)
         if session_details and isinstance(session_details, Session):
             logger.info(
-                f"OpenAI Session Created: ID='{session_details.id}', Status='{session_details.status}'"
+                f"OpenAI Session Created: ID='{session_details.id}'"
             )
         else:
             event_data_str = (
