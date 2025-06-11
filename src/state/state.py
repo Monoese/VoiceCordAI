@@ -123,6 +123,11 @@ class BotState:
         self._active_ai_provider_name = provider_name
         await self._update_message()  # Update UI to reflect the change
 
+    def _reset_authority(self):
+        """Atomically resets the authority user to 'anyone'."""
+        self._authority_user_id = "anyone"
+        self._authority_user_name = "anyone"
+
     def get_message_content(self) -> str:
         """
         Generate the standby message content based on the current state.
@@ -243,8 +248,7 @@ class BotState:
             return False
 
         self._current_state = BotStateEnum.STANDBY
-        self.authority_user_id = "anyone"  # Release specific user control
-        self._authority_user_name = "anyone"
+        self._reset_authority()  # Release specific user control
 
         await self._update_message()  # Update UI
         return True
@@ -275,8 +279,7 @@ class BotState:
                 self._standby_message = None
 
         self._current_state = BotStateEnum.IDLE
-        self.authority_user_id = "anyone"  # Reset authority
-        self._authority_user_name = "anyone"
+        self._reset_authority()  # Reset authority
         # No UI message to update in IDLE state.
         return True
 
@@ -326,8 +329,7 @@ class BotState:
             return False  # Already in the error state
 
         self._current_state = BotStateEnum.CONNECTION_ERROR
-        self.authority_user_id = "anyone"  # Reset authority
-        self._authority_user_name = "anyone"
+        self._reset_authority()  # Reset authority
 
         if self._standby_message:  # Update UI if a standby message exists
             await self._update_message()
@@ -354,8 +356,7 @@ class BotState:
             return False
 
         self._current_state = BotStateEnum.STANDBY
-        self.authority_user_id = "anyone"
-        self._authority_user_name = "anyone"
+        self._reset_authority()
         await (
             self._update_message()
         )  # Update the existing standby message to reflect STANDBY state
