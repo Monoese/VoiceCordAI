@@ -1,6 +1,8 @@
 import asyncio
 import os
 import base64
+import functools
+import subprocess
 from typing import Any, Optional, ByteString, Tuple
 from dataclasses import dataclass, field
 
@@ -133,27 +135,15 @@ class AudioManager:
         """
         return self.PCM16Sink()
 
-    async def resample_and_convert_audio(
+    def _blocking_resample(
         self,
         raw_audio_data: bytes,
-        target_sample_rate: int = Config.PROCESSING_AUDIO_FRAME_RATE,
-        target_channels: int = Config.PROCESSING_AUDIO_CHANNELS,
+        target_sample_rate: int,
+        target_channels: int,
     ) -> bytes:
         """
-        Executes FFmpeg to resample and convert raw audio input to a target format.
-        Defaults to converting to the application's standard processing format (e.g., 24kHz mono).
-        Utilizes an asynchronous subprocess execution to call FFmpeg.
-
-        Args:
-            raw_audio_data: Raw audio data (bytes) to be processed.
-            target_sample_rate: The desired sample rate for the output audio.
-            target_channels: The desired number of channels for the output audio (e.g., 1 for mono).
-
-        Returns:
-            bytes: The processed audio data in the target format.
-
-        Raises:
-            RuntimeError: If FFmpeg fails or returns a non-zero exit code.
+        Synchronously executes FFmpeg to resample audio. This is a blocking, CPU-bound operation
+        intended to be run in an executor.
         """
         cmd = [
             "ffmpeg",
@@ -161,31 +151,59 @@ class AudioManager:
             "-loglevel",
             "error",
             "-f",
-            Config.FFMPEG_PCM_FORMAT,  # Input format
+            Config.FFMPEG_PCM_FORMAT,
             "-ar",
-            str(Config.DISCORD_AUDIO_FRAME_RATE),  # Input sample rate from Discord
+            str(Config.DISCORD_AUDIO_FRAME_RATE),
             "-ac",
-            str(Config.DISCORD_AUDIO_CHANNELS),  # Input channels from Discord
+            str(Config.DISCORD_AUDIO_CHANNELS),
             "-i",
-            "pipe:0",  # Input from stdin pipe
+            "pipe:0",
             "-f",
-            Config.FFMPEG_PCM_FORMAT,  # Output format
+            Config.FFMPEG_PCM_FORMAT,
             "-ar",
-            str(target_sample_rate),  # Output sample rate for processing
+            str(target_sample_rate),
             "-ac",
-            str(target_channels),  # Output channels for processing (mono)
-            "pipe:1",  # Output to stdout pipe
+            str(target_channels),
+            "pipe:1",
         ]
-        proc = await asyncio.create_subprocess_exec(
-            *cmd,
-            stdin=asyncio.subprocess.PIPE,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
+        try:
+            proc = subprocess.run(
+                cmd, input=raw_audio_data, capture_output=True, check=True
+            )
+            return proc.stdout
+        except subprocess.CalledProcessError as e:
+            # Raise a RuntimeError consistent with the previous implementation's error type.
+            raise RuntimeError("ffmpeg failed: " + e.stderr.decode().strip()) from e
+
+    async def resample_and_convert_audio(
+        self,
+        raw_audio_data: bytes,
+        target_sample_rate: int = Config.PROCESSING_AUDIO_FRAME_RATE,
+        target_channels: int = Config.PROCESSING_AUDIO_CHANNELS,
+    ) -> bytes:
+        """
+        Asynchronously resamples and converts raw audio by offloading the blocking
+        FFmpeg process to a thread pool executor.
+
+        Args:
+            raw_audio_data: Raw audio data (bytes) to be processed.
+            target_sample_rate: The desired sample rate for the output audio.
+            target_channels: The desired number of channels for the output audio.
+
+        Returns:
+            bytes: The processed audio data in the target format.
+
+        Raises:
+            RuntimeError: If the FFmpeg process fails.
+        """
+        loop = asyncio.get_running_loop()
+        blocking_task = functools.partial(
+            self._blocking_resample,
+            raw_audio_data,
+            target_sample_rate,
+            target_channels,
         )
-        out, err = await proc.communicate(raw_audio_data)
-        if proc.returncode != 0:
-            raise RuntimeError("ffmpeg failed: " + err.decode().strip())
-        return out
+        return await loop.run_in_executor(None, blocking_task)
 
     @staticmethod
     def encode_to_base64(pcm_data: ByteString) -> str:

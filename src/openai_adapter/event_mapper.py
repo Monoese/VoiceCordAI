@@ -105,9 +105,7 @@ class OpenAIEventHandlerAdapter:
         """Handles 'session.created' events."""
         session_details: Optional[Session] = getattr(event, "session", None)
         if session_details and isinstance(session_details, Session):
-            logger.info(
-                f"OpenAI Session Created: ID='{session_details.id}'"
-            )
+            logger.info(f"OpenAI Session Created: ID='{session_details.id}'")
         else:
             event_data_str = (
                 event.model_dump_json(indent=2)
@@ -122,9 +120,7 @@ class OpenAIEventHandlerAdapter:
         """Handles 'session.updated' events."""
         session_details: Optional[Session] = getattr(event, "session", None)
         if session_details and isinstance(session_details, Session):
-            logger.info(
-                f"OpenAI Session Updated: ID='{session_details.id}'"
-            )
+            logger.info(f"OpenAI Session Updated: ID='{session_details.id}'")
         else:
             event_data_str = (
                 event.model_dump_json(indent=2)
