@@ -469,11 +469,25 @@ class AudioManager:
         """
         Main loop for managing audio playback.
 
-        This loop waits for signals (via `_playback_control_event`) and manages the
-        lifecycle of audio streams:
-        - Stops and cleans up old streams if a new `_current_stream_id` is set or if the current one ends.
-        - Prepares and starts new streams based on `_current_stream_id`.
-        - Handles one `_PlaybackStream` (via `current_stream_processor`) at a time.
+        This loop operates as a state machine driven by `_current_stream_id`, which acts
+        as the "target" stream to be played. It handles one audio stream at a time,
+        ensuring smooth transitions and proper resource cleanup.
+
+        The loop's cycle is triggered by `_playback_control_event` and has two main phases:
+        1.  **Phase 1: Stop/Transition:** If a stream is currently being processed
+            (`current_stream_processor` exists) but the global target
+            (`_current_stream_id`) has changed or been cleared, this phase stops the
+            current playback and cleans up all associated resources (tasks, pipes, etc.).
+            It relies on the `playback_done_event`, which is set by the `after=`
+            callback of `voice_client.play()`, to know when it's safe to clean up.
+
+        2.  **Phase 2: Start New Stream:** If a new target `_current_stream_id` is set
+            and no stream is currently being processed, this phase prepares all necessary
+            resources for the new stream (creates pipes, FFmpeg source, feeder task)
+            and starts playback.
+
+        This design ensures that only one audio stream is active at any given time and
+        that resources from a previous stream are fully released before a new one begins.
         """
         current_stream_processor: Optional[_PlaybackStream] = None
         try:
