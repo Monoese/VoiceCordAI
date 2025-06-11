@@ -12,9 +12,7 @@ import base64
 from typing import Optional, Dict, Any
 
 from openai import AsyncOpenAI
-from openai.resources.beta.realtime.realtime import (
-    AsyncRealtimeConnection as OpenAIConnectionObject,
-)
+from openai.resources.beta.realtime.realtime import AsyncRealtimeConnection
 
 from src.config.config import Config
 from src.utils.logger import get_logger
@@ -59,7 +57,7 @@ class OpenAIRealtimeManager(IRealtimeAIServiceManager):
             client=self.openai_client
         )
 
-    async def _get_active_conn(self) -> Optional[OpenAIConnectionObject]:
+    async def _get_active_conn(self) -> Optional[AsyncRealtimeConnection]:
         """Helper to get the active connection object if connected."""
         if not self._is_connected_flag:
             logger.debug("_get_active_conn: Not connected based on internal flag.")
