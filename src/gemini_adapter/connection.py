@@ -26,6 +26,11 @@ logger = get_logger(__name__)
 class GeminiRealtimeConnection:
     """
     Manages a connection to the Gemini Live API.
+
+    This class handles the lifecycle of the connection, including connecting,
+    processing incoming events, and disconnecting. It features a self-healing
+    mechanism with exponential backoff to automatically reconnect after
+    transient network failures.
     """
 
     def __init__(
@@ -79,115 +84,105 @@ class GeminiRealtimeConnection:
 
     async def _run_event_loop(self) -> None:
         """
-        Internal method to manage the connection context and event stream.
-        """
-        try:
-            live_connect_config_obj = types.LiveConnectConfig(
-                **self.live_connect_config_params
-            )
-            logger.info(
-                f"GeminiRealtimeConnection: _run_event_loop connecting with config: {self.live_connect_config_params}"
-            )
+        Internal method to manage the connection and event stream with a retry loop.
 
-            async with self.gemini_client.aio.live.connect(
-                model=self.model_name, config=live_connect_config_obj
-            ) as session:
-                self._session_object = session
+        This loop continuously attempts to connect and process events. If the connection
+        is lost, it waits for a period (exponential backoff) before retrying, making
+        the connection resilient to transient network issues.
+        """
+        retry_delay = 1.0
+        max_retry_delay = 30.0
+
+        while not self._shutdown_signal.is_set():
+            try:
+                live_connect_config_obj = types.LiveConnectConfig(
+                    **self.live_connect_config_params
+                )
                 logger.info(
-                    "GeminiRealtimeConnection: Successfully connected to Gemini Live API and session established."
+                    f"Attempting to connect to Gemini Live API with model: {self.model_name}..."
                 )
 
-                while self.is_connected() and not self._shutdown_signal.is_set():
-                    try:
-                        logger.debug(
-                            "GeminiRealtimeConnection: Waiting for next turn from session.receive()..."
-                        )
-                        turn_iterator = self._session_object.receive()
+                async with self.gemini_client.aio.live.connect(
+                    model=self.model_name, config=live_connect_config_obj
+                ) as session:
+                    self._session_object = session
+                    logger.info(
+                        "Successfully connected to Gemini Live API. Resetting retry delay."
+                    )
+                    retry_delay = 1.0  # Reset delay on successful connection
 
-                        current_turn_stream_id: Optional[str] = (
-                            None  # Holds the stream ID for the current turn
-                        )
+                    while self.is_connected() and not self._shutdown_signal.is_set():
+                        try:
+                            logger.debug(
+                                "GeminiRealtimeConnection: Waiting for next turn from session.receive()..."
+                            )
+                            turn_iterator = self._session_object.receive()
+                            current_turn_stream_id: Optional[str] = None
 
-                        async for message in turn_iterator:
-                            if self._shutdown_signal.is_set():
-                                logger.info(
-                                    "GeminiRealtimeConnection: Shutdown signal received during message processing. Breaking inner loop."
-                                )
-                                break
-
-                            # Check for actual audio data in the message
-                            if message.server_content and message.data:
-                                if (
-                                    current_turn_stream_id is None
-                                ):  # First audio chunk for this turn
-                                    current_turn_stream_id = str(uuid.uuid4())
+                            async for message in turn_iterator:
+                                if self._shutdown_signal.is_set():
                                     logger.info(
-                                        f"GeminiRealtimeConnection: Starting new audio stream for turn: {current_turn_stream_id} upon first audio data."
+                                        "Shutdown signal detected during message processing. Breaking inner loop."
                                     )
-                                    await self._audio_manager.start_new_audio_stream(
-                                        current_turn_stream_id
-                                    )
+                                    break
 
-                            await (
-                                self.event_handler_adapter.process_live_server_message(
+                                if message.server_content and message.data:
+                                    if current_turn_stream_id is None:
+                                        current_turn_stream_id = str(uuid.uuid4())
+                                        logger.info(
+                                            f"Starting new audio stream for turn: {current_turn_stream_id} upon first audio data."
+                                        )
+                                        await self._audio_manager.start_new_audio_stream(
+                                            current_turn_stream_id
+                                        )
+
+                                await self.event_handler_adapter.process_live_server_message(
                                     message
                                 )
-                            )
 
-                        logger.info(
-                            "GeminiRealtimeConnection: Finished processing turn."
-                        )
-                        if (
-                            current_turn_stream_id
-                        ):  # Only end stream if one was actually started for this turn
-                            logger.info(
-                                f"GeminiRealtimeConnection: Ending audio stream: {current_turn_stream_id}"
-                            )
-                            await self._audio_manager.end_audio_stream()
-                        # Else, if no audio was received in this turn, no stream was started, so no need to end one.
+                            logger.info("Finished processing turn.")
+                            if current_turn_stream_id:
+                                logger.info(
+                                    f"Ending audio stream: {current_turn_stream_id}"
+                                )
+                                await self._audio_manager.end_audio_stream()
 
-                        if self._shutdown_signal.is_set():
-                            logger.info(
-                                "GeminiRealtimeConnection: Shutdown signal received after turn processing. Breaking outer loop."
-                            )
-                            break
+                            if self._shutdown_signal.is_set():
+                                break
 
-                    except asyncio.CancelledError:
-                        logger.info(
-                            "GeminiRealtimeConnection: _run_event_loop's receive operation cancelled."
-                        )
-                        break
-                    except Exception as e:
+                        except Exception as e:
+                            logger.error(
+                                f"GeminiRealtimeConnection: Error in receive loop: {e}",
+                                exc_info=True,
+                            )
+                            break  # Break inner loop to trigger reconnection
+
+            except Exception as e:
+                logger.error(
+                    f"Gemini connection error: {e}. Will attempt to reconnect.",
+                    exc_info=True,
+                )
+
+            finally:
+                if self._session_object:
+                    try:
+                        await self._session_object.close()
+                    except Exception as e_close:
                         logger.error(
-                            f"GeminiRealtimeConnection: Error in receive loop: {e}",
+                            f"Error closing session in finally block: {e_close}",
                             exc_info=True,
                         )
-                        break
+                self._session_object = None
 
-        except asyncio.CancelledError:
-            logger.info("GeminiRealtimeConnection: _run_event_loop task was cancelled.")
-        except Exception as e:
-            logger.error(
-                f"GeminiRealtimeConnection: Fatal error in _run_event_loop (e.g., connection failed): {e}",
-                exc_info=True,
-            )
-        finally:
-            logger.info("GeminiRealtimeConnection: _run_event_loop is shutting down.")
-            if self._session_object:
-                try:
-                    await self._session_object.close()
-                    logger.info(
-                        "GeminiRealtimeConnection: Session closed from _run_event_loop finally block."
-                    )
-                except Exception as e_close:
-                    logger.error(
-                        f"GeminiRealtimeConnection: Error closing session in _run_event_loop finally: {e_close}",
-                        exc_info=True,
-                    )
-            self._session_object = None
-            logger.info(
-                "GeminiRealtimeConnection: _run_event_loop finished and connection status updated."
-            )
+            if self._shutdown_signal.is_set():
+                logger.info("Shutdown signal detected. Halting reconnection attempts.")
+                break
+
+            logger.info(f"Waiting {retry_delay:.1f} seconds before next connection attempt.")
+            await asyncio.sleep(retry_delay)
+            retry_delay = min(retry_delay * 2, max_retry_delay)
+
+        logger.info("Gemini Realtime event loop has terminated.")
 
     async def disconnect(self) -> None:
         """
@@ -227,7 +222,7 @@ class GeminiRealtimeConnection:
 
     def get_active_session(
         self,
-    ) -> Optional[genai.live.AsyncSession]:  # Changed genai_types to types
+    ) -> Optional[genai.live.AsyncSession]:
         """
         Returns the active Gemini AsyncSession object if connected.
         """

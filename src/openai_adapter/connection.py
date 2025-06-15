@@ -29,7 +29,8 @@ class OpenAIRealtimeConnection:
     Manages a connection to the OpenAI Realtime API.
 
     This class handles the lifecycle of the connection, including connecting,
-    processing incoming events, and disconnecting.
+    processing incoming events, and disconnecting. It features a self-healing
+    mechanism to automatically reconnect after transient network failures.
     """
 
     def __init__(self, client: AsyncOpenAI):
@@ -83,19 +84,31 @@ class OpenAIRealtimeConnection:
         self, event_callback: Callable[[RealtimeEvent], Awaitable[None]]
     ) -> None:
         """
-        Internal method to manage the connection context and event stream.
-        """
-        try:
-            logger.info(
-                f"Attempting to connect to OpenAI Realtime API with model: {self.model_name}..."
-            )
-            # The `async with` block manages the WebSocket connection lifecycle.
-            async with self.client.beta.realtime.connect(model=self.model_name) as conn:
-                self._connection_object = conn
-                # _is_attempting_connection is fully reset by the wrapper's finally block.
-                logger.info("Successfully connected to OpenAI Realtime API.")
+        Internal method to manage the connection and event stream with a retry loop.
 
-                try:
+        This loop continuously attempts to connect and process events. If the connection
+        is lost, it waits for a period (exponential backoff) before retrying, making
+        the connection resilient to transient network issues.
+        """
+        retry_delay = 1.0
+        max_retry_delay = 30.0
+
+        while not self._shutdown_signal.is_set():
+            try:
+                logger.info(
+                    f"Attempting to connect to OpenAI Realtime API with model: {self.model_name}..."
+                )
+                # The `async with` block manages the WebSocket connection lifecycle.
+                async with self.client.beta.realtime.connect(
+                    model=self.model_name
+                ) as conn:
+                    self._connection_object = conn
+                    logger.info(
+                        "Successfully connected to OpenAI Realtime API. Resetting retry delay."
+                    )
+                    retry_delay = 1.0  # Reset delay on successful connection
+
+                    # Process events from the active connection.
                     async for event in conn:
                         if self._shutdown_signal.is_set():
                             logger.info(
@@ -103,30 +116,35 @@ class OpenAIRealtimeConnection:
                             )
                             break
                         await event_callback(event)
-                except Exception as e:
-                    logger.error(
-                        f"Error during event iteration or callback: {e}", exc_info=True
-                    )
-                finally:
-                    logger.info("Exiting event processing loop.")
 
-            logger.info(
-                "Exited OpenAI Realtime API 'async with' block (connection closed)."
-            )
+                    # If the loop exits cleanly, it means the server closed the connection.
+                    # We will attempt to reconnect after a delay unless a shutdown was signaled.
+                    logger.info("Event stream ended. Connection likely closed by server.")
 
-        except Exception as e:
-            # This catches errors during the client.beta.realtime.connect() call itself
-            # or other unexpected errors in the connection management.
-            logger.error(
-                f"Failed to connect or unexpected error in OpenAI Realtime API connection: {e}",
-                exc_info=True,
-            )
-        finally:
-            logger.info("OpenAI Realtime event loop processing finished.")
-            self._connection_object = (
-                None  # Ensure connection object is cleared on any exit
-            )
-            # _is_attempting_connection is reset by the calling wrapper's finally block.
+            except Exception as e:
+                # This catches errors during the connect() call or the event loop.
+                logger.error(
+                    f"OpenAI connection error: {e}. Will attempt to reconnect.",
+                    exc_info=True,
+                )
+
+            finally:
+                # Always ensure the connection object is cleared when a connection is lost.
+                self._connection_object = None
+
+            # If a shutdown is requested, exit the while loop immediately.
+            if self._shutdown_signal.is_set():
+                logger.info("Shutdown signal detected. Halting reconnection attempts.")
+                break
+
+            # Wait before retrying to avoid spamming the API.
+            logger.info(f"Waiting {retry_delay:.1f} seconds before next connection attempt.")
+            await asyncio.sleep(retry_delay)
+
+            # Increase delay for the next attempt (exponential backoff).
+            retry_delay = min(retry_delay * 2, max_retry_delay)
+
+        logger.info("OpenAI Realtime event loop has terminated.")
 
     async def disconnect(self) -> None:
         """
