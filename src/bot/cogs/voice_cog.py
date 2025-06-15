@@ -203,17 +203,17 @@ class VoiceCog(commands.Cog):
         """
         logger.debug(f"Starting background audio processing for {len(pcm_data)} bytes.")
         try:
-            processed_pcm_data = await self.audio_manager.resample_and_convert_audio(
+            processed_pcm_data = await self.audio_manager.process_recorded_audio(
                 pcm_data
             )
             logger.debug(
-                f"Resampling complete. Processed data size: {len(processed_pcm_data)} bytes."
+                f"Audio processing complete. Processed data size: {len(processed_pcm_data)} bytes."
             )
             await self._process_and_send_audio(processed_pcm_data, channel)
         except asyncio.CancelledError:
             logger.info("Audio processing task was cancelled.")
         except RuntimeError as e:
-            logger.error(f"Error processing audio with ffmpeg: {e}", exc_info=True)
+            logger.error(f"Error processing audio: {e}", exc_info=True)
             await channel.send("Error processing your audio. Please try again.")
         except Exception as e:
             logger.error(

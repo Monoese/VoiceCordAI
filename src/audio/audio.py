@@ -2,12 +2,14 @@ import asyncio
 import os
 import base64
 import functools
+import io
 import subprocess
 from typing import Any, Optional, ByteString, Tuple
 from dataclasses import dataclass, field
 
 from discord import FFmpegPCMAudio, User
 from discord.ext import voice_recv
+from pydub import AudioSegment
 
 from src.config.config import Config
 from src.utils.logger import get_logger
@@ -135,75 +137,58 @@ class AudioManager:
         """
         return self.PCM16Sink()
 
-    def _blocking_resample(
-        self,
-        raw_audio_data: bytes,
-        target_sample_rate: int,
-        target_channels: int,
-    ) -> bytes:
+    async def process_recorded_audio(self, raw_audio_data: bytes) -> bytes:
         """
-        Synchronously executes FFmpeg to resample audio. This is a blocking, CPU-bound operation
-        intended to be run in an executor.
-        """
-        cmd = [
-            "ffmpeg",
-            "-hide_banner",
-            "-loglevel",
-            "error",
-            "-f",
-            Config.FFMPEG_PCM_FORMAT,
-            "-ar",
-            str(Config.DISCORD_AUDIO_FRAME_RATE),
-            "-ac",
-            str(Config.DISCORD_AUDIO_CHANNELS),
-            "-i",
-            "pipe:0",
-            "-f",
-            Config.FFMPEG_PCM_FORMAT,
-            "-ar",
-            str(target_sample_rate),
-            "-ac",
-            str(target_channels),
-            "pipe:1",
-        ]
-        try:
-            proc = subprocess.run(
-                cmd, input=raw_audio_data, capture_output=True, check=True
-            )
-            return proc.stdout
-        except subprocess.CalledProcessError as e:
-            # Raise a RuntimeError consistent with the previous implementation's error type.
-            raise RuntimeError("ffmpeg failed: " + e.stderr.decode().strip()) from e
+        Converts raw PCM audio from Discord's format into the format required by
+        AI services, using efficient in-memory processing and project-wide configurations.
 
-    async def resample_and_convert_audio(
-        self,
-        raw_audio_data: bytes,
-        target_sample_rate: int = Config.PROCESSING_AUDIO_FRAME_RATE,
-        target_channels: int = Config.PROCESSING_AUDIO_CHANNELS,
-    ) -> bytes:
-        """
-        Asynchronously resamples and converts raw audio by offloading the blocking
-        FFmpeg process to a thread pool executor.
+        This method replaces the previous, inefficient approach of shelling out to an
+        `ffmpeg` subprocess for every recording. By using `pydub`, all transcoding
+        (resampling and channel mixing) happens within the Python process, dramatically
+        reducing latency and CPU overhead.
 
         Args:
-            raw_audio_data: Raw audio data (bytes) to be processed.
-            target_sample_rate: The desired sample rate for the output audio.
-            target_channels: The desired number of channels for the output audio.
+            raw_audio_data: The raw S16LE PCM audio bytes from the Discord sink.
 
         Returns:
-            bytes: The processed audio data in the target format.
+            bytes: The processed S16LE PCM audio bytes ready for the AI service.
 
         Raises:
-            RuntimeError: If the FFmpeg process fails.
+            RuntimeError: If the audio processing fails at any stage.
         """
-        loop = asyncio.get_running_loop()
-        blocking_task = functools.partial(
-            self._blocking_resample,
-            raw_audio_data,
-            target_sample_rate,
-            target_channels,
+        # 1. Load the raw PCM data into a pydub AudioSegment.
+        #    We must explicitly define the format of the incoming raw data using
+        #    the application's configuration settings.
+        try:
+            audio_segment = AudioSegment(
+                data=raw_audio_data,
+                sample_width=Config.SAMPLE_WIDTH,
+                frame_rate=Config.DISCORD_AUDIO_FRAME_RATE,
+                channels=Config.DISCORD_AUDIO_CHANNELS,
+            )
+        except Exception as e:
+            logger.error(f"Failed to load raw audio into pydub AudioSegment: {e}")
+            raise RuntimeError("Audio processing failed during data loading.") from e
+
+        # 2. Downmix to the number of channels required by the AI service.
+        processed_segment = audio_segment.set_channels(
+            Config.PROCESSING_AUDIO_CHANNELS
         )
-        return await loop.run_in_executor(None, blocking_task)
+
+        # 3. Resample to the sample rate required by the AI service.
+        processed_segment = processed_segment.set_frame_rate(
+            Config.PROCESSING_AUDIO_FRAME_RATE
+        )
+
+        # 4. Export the processed audio back to raw PCM bytes.
+        buffer = io.BytesIO()
+        processed_segment.export(buffer, format="raw")  # "raw" corresponds to pcm_s16le
+
+        processed_bytes = buffer.getvalue()
+        logger.debug(
+            f"Audio processed via pydub: {len(raw_audio_data)} bytes -> {len(processed_bytes)} bytes"
+        )
+        return processed_bytes
 
     @staticmethod
     def encode_to_base64(pcm_data: ByteString) -> str:
