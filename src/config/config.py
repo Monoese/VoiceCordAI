@@ -61,10 +61,6 @@ class Config:
     DISCORD_AUDIO_FRAME_RATE: int = 48000  # Samples per second, per channel
     DISCORD_AUDIO_CHANNELS: int = 2  # Number of audio channels (e.g., 2 for stereo)
 
-    # Internal Processing Audio Format (for internal processing, e.g., by OpenAI)
-    PROCESSING_AUDIO_FRAME_RATE: int = 24000  # Samples per second, per channel
-    PROCESSING_AUDIO_CHANNELS: int = 1  # Number of audio channels (e.g., 1 for mono)
-
     # --- Logging Configuration ---
     LOG_LEVEL: Union[int, str] = logging.INFO  # General log level for file logs
     LOG_CONSOLE_LEVEL: Union[int, str] = logging.INFO  # Log level for console output
@@ -95,6 +91,10 @@ class Config:
         "initial_session_data": OPENAI_SERVICE_INITIAL_SESSION_DATA,
         "connection_timeout": OPENAI_SERVICE_CONNECTION_TIMEOUT,
         # "response_creation_data": OPENAI_SERVICE_RESPONSE_CREATION_DATA # Uncomment if using the above
+        "processing_audio_frame_rate": 24000,
+        "processing_audio_channels": 1,
+        "response_audio_frame_rate": 24000,
+        "response_audio_channels": 1,
     }
 
     # --- Gemini Service Configuration ---
@@ -121,6 +121,10 @@ class Config:
         "model_name": GEMINI_REALTIME_MODEL_NAME,
         "live_connect_config": GEMINI_DEFAULT_LIVE_CONNECT_CONFIG,
         "connection_timeout": 30.0,  # Example connection timeout for Gemini
+        "processing_audio_frame_rate": 16000,  # As per Gemini docs
+        "processing_audio_channels": 1,
+        "response_audio_frame_rate": 24000,  # As per Gemini docs
+        "response_audio_channels": 1,
     }
 
     @classmethod

@@ -7,10 +7,7 @@ through a common set of methods.
 """
 
 from abc import ABC, abstractmethod
-from typing import Any, Dict
-
-# Assuming AudioManager is in src.audio.audio
-# Adjust the import path if AudioManager is located elsewhere.
+from typing import Any, Dict, Tuple
 from src.audio.audio import AudioManager
 
 
@@ -21,6 +18,8 @@ class IRealtimeAIServiceManager(ABC):
     This interface defines the common methods that VoiceCog will use to interact
     with an underlying AI service for voice chat functionalities, including
     connection management, sending audio/text, and controlling responses.
+
+    It also defines properties for retrieving service-specific audio formats.
     """
 
     def __init__(self, audio_manager: AudioManager, service_config: Dict[str, Any]):
@@ -34,13 +33,52 @@ class IRealtimeAIServiceManager(ABC):
             service_config: A dictionary containing service-specific configurations,
                             such as API keys, model names, endpoint URLs,
                             initial session parameters, or other settings required by
-                            the specific AI service implementation.
+                            the specific AI service implementation. The following keys
+                            are required:
+                            - `processing_audio_frame_rate` and `processing_audio_channels`
+                            - `response_audio_frame_rate` and `response_audio_channels`
         """
         self._audio_manager: AudioManager = audio_manager
         self._service_config: Dict[str, Any] = service_config
         self._is_connected_flag: bool = (
             False  # Internal state managed by implementations
         )
+
+        # --- Audio Format Configuration ---
+        # Directly access configuration keys. A KeyError will be raised if a key is
+        # missing, which indicates a configuration error that should be fixed.
+        self._processing_audio_format: Tuple[int, int] = (
+            service_config["processing_audio_frame_rate"],
+            service_config["processing_audio_channels"],
+        )
+
+        self._response_audio_format: Tuple[int, int] = (
+            service_config["response_audio_frame_rate"],
+            service_config["response_audio_channels"],
+        )
+
+    @property
+    def processing_audio_format(self) -> Tuple[int, int]:
+        """
+        Returns the audio format required by the AI service for processing input audio.
+
+        Returns:
+            A tuple containing (frame_rate: int, channels: int).
+        """
+        return self._processing_audio_format
+
+    @property
+    def response_audio_format(self) -> Tuple[int, int]:
+        """
+        Returns the audio format of the response audio from the AI service.
+
+        This is used to correctly configure the playback system (e.g., FFmpeg)
+        to handle the audio stream received from the service.
+
+        Returns:
+            A tuple containing (frame_rate: int, channels: int).
+        """
+        return self._response_audio_format
 
     @abstractmethod
     async def connect(self) -> bool:
@@ -167,7 +205,7 @@ class IRealtimeAIServiceManager(ABC):
     #    transcribed text, errors, stream lifecycle events).
     # 2. Using the `self._audio_manager` instance (provided in __init__) to handle audio playback.
     #    This involves calling methods like:
-    #    - `self._audio_manager.start_new_audio_stream(stream_id)`
+    #    - `self._audio_manager.start_new_audio_stream(stream_id, self.response_audio_format)`
     #    - `self._audio_manager.add_audio_chunk(audio_chunk_bytes)`
     #    - `self._audio_manager.end_audio_stream()`
     #    The `stream_id` would be generated or obtained by the manager to uniquely identify

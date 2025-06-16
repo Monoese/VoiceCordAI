@@ -4,21 +4,18 @@ Gemini Realtime Connection Management.
 This module provides the GeminiRealtimeConnection class, responsible for:
 - Establishing and maintaining the connection to Google's Gemini Live API.
 - Handling the asynchronous event stream from the API.
-- Coordinating with the event handler adapter to process messages.
+- Translating the API's turn-based responses into a stream of synthetic events.
 """
 
 import asyncio
 import uuid
-from typing import Optional, TYPE_CHECKING
+from typing import Optional, Callable, Awaitable, Any
 
 from google import genai
 from google.genai import types
 
 from src.utils.logger import get_logger
-
-if TYPE_CHECKING:
-    from .event_handler import GeminiEventHandlerAdapter
-    from src.audio.audio import AudioManager
+from .event_handler import TurnStartEvent, TurnMessageEvent, TurnEndEvent
 
 logger = get_logger(__name__)
 
@@ -27,10 +24,11 @@ class GeminiRealtimeConnection:
     """
     Manages a connection to the Gemini Live API.
 
-    This class handles the lifecycle of the connection, including connecting,
-    processing incoming events, and disconnecting. It features a self-healing
-    mechanism with exponential backoff to automatically reconnect after
-    transient network failures.
+    This class acts as a transport layer, handling the lifecycle of the connection,
+    including connecting, disconnecting, and processing the incoming event stream.
+    It translates the API's turn-based structure into a series of synthetic events
+    and features a self-healing mechanism with exponential backoff to automatically
+    reconnect after transient network failures.
     """
 
     def __init__(
@@ -38,16 +36,10 @@ class GeminiRealtimeConnection:
         gemini_client: genai.Client,
         model_name: str,
         live_connect_config_params: dict,
-        event_handler_adapter: "GeminiEventHandlerAdapter",
-        audio_manager: "AudioManager",  # Passed through to event handler logic for stream IDs
     ):
         self.gemini_client: genai.Client = gemini_client
         self.model_name: str = model_name
         self.live_connect_config_params: dict = live_connect_config_params
-        self.event_handler_adapter: "GeminiEventHandlerAdapter" = event_handler_adapter
-        self._audio_manager: "AudioManager" = (
-            audio_manager  # For managing stream IDs per turn
-        )
 
         self._session_object: Optional[genai.live.AsyncSession] = None
         self._event_loop_task: Optional[asyncio.Task] = None
@@ -56,10 +48,14 @@ class GeminiRealtimeConnection:
             False  # To prevent multiple concurrent connect calls
         )
 
-    async def connect(self) -> None:
+    async def connect(self, event_callback: Callable[[Any], Awaitable[None]]) -> None:
         """
         Establishes the connection and starts the event processing loop.
         If a connection attempt is already in progress or active, this method returns early.
+
+        Args:
+            event_callback: An asynchronous callable that will be invoked with each
+                            synthetic event generated from the API stream.
         """
         if self._is_attempting_connection:
             logger.info(
@@ -75,14 +71,16 @@ class GeminiRealtimeConnection:
 
         async def _connect_task_wrapper():
             try:
-                await self._run_event_loop()
+                await self._run_event_loop(event_callback)
             finally:
                 self._is_attempting_connection = False
 
         self._event_loop_task = asyncio.create_task(_connect_task_wrapper())
         logger.info("GeminiRealtimeConnection: Connection task initiated.")
 
-    async def _run_event_loop(self) -> None:
+    async def _run_event_loop(
+        self, event_callback: Callable[[Any], Awaitable[None]]
+    ) -> None:
         """
         Internal method to manage the connection and event stream with a retry loop.
 
@@ -117,35 +115,19 @@ class GeminiRealtimeConnection:
                                 "GeminiRealtimeConnection: Waiting for next turn from session.receive()..."
                             )
                             turn_iterator = self._session_object.receive()
-                            current_turn_stream_id: Optional[str] = None
+                            turn_id = str(uuid.uuid4())
 
+                            # Emit a start event for the new turn
+                            await event_callback(TurnStartEvent(turn_id=turn_id))
+
+                            # Emit message events for each message in the turn
                             async for message in turn_iterator:
                                 if self._shutdown_signal.is_set():
-                                    logger.info(
-                                        "Shutdown signal detected during message processing. Breaking inner loop."
-                                    )
                                     break
+                                await event_callback(TurnMessageEvent(message=message))
 
-                                if message.server_content and message.data:
-                                    if current_turn_stream_id is None:
-                                        current_turn_stream_id = str(uuid.uuid4())
-                                        logger.info(
-                                            f"Starting new audio stream for turn: {current_turn_stream_id} upon first audio data."
-                                        )
-                                        await self._audio_manager.start_new_audio_stream(
-                                            current_turn_stream_id
-                                        )
-
-                                await self.event_handler_adapter.process_live_server_message(
-                                    message
-                                )
-
-                            logger.info("Finished processing turn.")
-                            if current_turn_stream_id:
-                                logger.info(
-                                    f"Ending audio stream: {current_turn_stream_id}"
-                                )
-                                await self._audio_manager.end_audio_stream()
+                            # Emit an end event after the turn is complete
+                            await event_callback(TurnEndEvent(turn_id=turn_id))
 
                             if self._shutdown_signal.is_set():
                                 break

@@ -203,8 +203,17 @@ class VoiceCog(commands.Cog):
         """
         logger.debug(f"Starting background audio processing for {len(pcm_data)} bytes.")
         try:
+            target_frame_rate, target_channels = (
+                self.active_ai_service_manager.processing_audio_format
+            )
+            logger.info(
+                f"Processing audio for '{self.bot_state_manager.active_ai_provider_name}' at {target_frame_rate}Hz, {target_channels} channel(s)."
+            )
+
             processed_pcm_data = await self.audio_manager.process_recorded_audio(
-                pcm_data
+                pcm_data,
+                target_frame_rate=target_frame_rate,
+                target_channels=target_channels,
             )
             logger.debug(
                 f"Audio processing complete. Processed data size: {len(processed_pcm_data)} bytes."

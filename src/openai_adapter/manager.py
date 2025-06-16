@@ -6,6 +6,7 @@ the primary interface for the bot to interact with the OpenAI Realtime API
 via the new adapter. It will coordinate connection management, event sending,
 and event handling.
 """
+from __future__ import annotations
 
 import asyncio
 import base64
@@ -51,7 +52,7 @@ class OpenAIRealtimeManager(IRealtimeAIServiceManager):
         )
 
         self.event_handler_adapter: OpenAIEventHandlerAdapter = (
-            OpenAIEventHandlerAdapter(audio_manager=self._audio_manager)
+            OpenAIEventHandlerAdapter(audio_manager=self._audio_manager, manager=self)
         )
         self.connection_handler: OpenAIRealtimeConnection = OpenAIRealtimeConnection(
             client=self.openai_client

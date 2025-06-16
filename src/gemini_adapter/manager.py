@@ -84,7 +84,7 @@ class GeminiRealtimeManager(IRealtimeAIServiceManager):
             )
 
         self.event_handler_adapter: GeminiEventHandlerAdapter = (
-            GeminiEventHandlerAdapter(self._audio_manager)
+            GeminiEventHandlerAdapter(self._audio_manager, self)
         )
 
         # Initialize connection_handler if gemini_client and model_name are available
@@ -93,8 +93,6 @@ class GeminiRealtimeManager(IRealtimeAIServiceManager):
                 gemini_client=self.gemini_client,
                 model_name=self.model_name,
                 live_connect_config_params=self.live_connect_config_params,
-                event_handler_adapter=self.event_handler_adapter,
-                audio_manager=self._audio_manager,  # Pass audio_manager for stream ID logic
             )
         else:
             logger.error(
@@ -156,7 +154,7 @@ class GeminiRealtimeManager(IRealtimeAIServiceManager):
             )
             return False
 
-        await self.connection_handler.connect()
+        await self.connection_handler.connect(self.event_handler_adapter.dispatch_event)
 
         timeout = self._service_config.get("connection_timeout", 30.0)
         wait_interval = 0.1
@@ -192,7 +190,7 @@ class GeminiRealtimeManager(IRealtimeAIServiceManager):
     async def send_audio_chunk(self, audio_data: bytes) -> bool:
         """
         Sends a chunk of raw audio data to the Gemini Live API.
-        Uses `send_realtime_input(audio=audio_data)`.
+        The audio is wrapped in a types.Blob and sent via the `media` parameter.
         """
         session = await self._get_active_session()
         if not session:
@@ -202,10 +200,11 @@ class GeminiRealtimeManager(IRealtimeAIServiceManager):
             return False
 
         try:
-            # Wrap the audio data in a types.Blob and use the 'media' parameter
-            # The MIME type should reflect the format of `audio_data`
-            # which is PCM, 1 channel (mono), 24000 Hz from our processing.
-            mime_type = f"audio/pcm;rate={Config.PROCESSING_AUDIO_FRAME_RATE}"
+            # Get the required audio frame rate from the service-specific configuration.
+            frame_rate, _ = self.processing_audio_format
+            mime_type = f"audio/pcm;rate={frame_rate}"
+
+            # Wrap the audio data in a types.Blob and use the 'media' parameter.
             audio_blob = types.Blob(data=audio_data, mime_type=mime_type)
 
             await session.send_realtime_input(media=audio_blob)

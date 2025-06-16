@@ -60,6 +60,7 @@ class AudioManager:
         # *expecting* to receive chunks for or has been told to start.
         # This is set by start_new_audio_stream().
         self._current_stream_id: Optional[str] = None
+        self._current_response_format: Optional[Tuple[int, int]] = None
         self._eos_queued_for_streams: set[str] = (
             set()
         )  # Tracks streams for which EOS has been queued
@@ -137,18 +138,20 @@ class AudioManager:
         """
         return self.PCM16Sink()
 
-    async def process_recorded_audio(self, raw_audio_data: bytes) -> bytes:
+    async def process_recorded_audio(
+        self, raw_audio_data: bytes, target_frame_rate: int, target_channels: int
+    ) -> bytes:
         """
         Converts raw PCM audio from Discord's format into the format required by
-        AI services, using efficient in-memory processing and project-wide configurations.
+        AI services, using efficient in-memory processing.
 
-        This method replaces the previous, inefficient approach of shelling out to an
-        `ffmpeg` subprocess for every recording. By using `pydub`, all transcoding
-        (resampling and channel mixing) happens within the Python process, dramatically
-        reducing latency and CPU overhead.
+        This method uses `pydub` for all transcoding (resampling and channel mixing),
+        which happens within the Python process, reducing latency and CPU overhead.
 
         Args:
             raw_audio_data: The raw S16LE PCM audio bytes from the Discord sink.
+            target_frame_rate: The target sample rate (e.g., 16000 for Gemini, 24000 for OpenAI).
+            target_channels: The target number of audio channels (e.g., 1 for mono).
 
         Returns:
             bytes: The processed S16LE PCM audio bytes ready for the AI service.
@@ -171,14 +174,10 @@ class AudioManager:
             raise RuntimeError("Audio processing failed during data loading.") from e
 
         # 2. Downmix to the number of channels required by the AI service.
-        processed_segment = audio_segment.set_channels(
-            Config.PROCESSING_AUDIO_CHANNELS
-        )
+        processed_segment = audio_segment.set_channels(target_channels)
 
         # 3. Resample to the sample rate required by the AI service.
-        processed_segment = processed_segment.set_frame_rate(
-            Config.PROCESSING_AUDIO_FRAME_RATE
-        )
+        processed_segment = processed_segment.set_frame_rate(target_frame_rate)
 
         # 4. Export the processed audio back to raw PCM bytes.
         buffer = io.BytesIO()
@@ -217,10 +216,17 @@ class AudioManager:
                 return parts[0]
         return None
 
-    async def start_new_audio_stream(self, stream_id: str):
+    async def start_new_audio_stream(
+        self, stream_id: str, response_format: Tuple[int, int]
+    ):
         """
         Signals the playback_loop to prepare for a new audio stream.
         If another stream is active, an EOS marker is queued for it.
+
+        Args:
+            stream_id: A unique identifier for the new audio stream.
+            response_format: A tuple (frame_rate, channels) specifying the format
+                             of the incoming audio from the AI service.
         """
         previous_stream_id = self._current_stream_id
         if previous_stream_id is not None and previous_stream_id != stream_id:
@@ -234,8 +240,9 @@ class AudioManager:
             # and transition by cleaning up the old stream processor and starting a new one.
 
         self._current_stream_id = stream_id
+        self._current_response_format = response_format
         logger.info(
-            f"AudioManager: New target audio stream set to '{self._current_stream_id}'"
+            f"AudioManager: New target audio stream set to '{self._current_stream_id}' with format {response_format}"
         )
         self._playback_control_event.set()
 
@@ -295,11 +302,25 @@ class AudioManager:
 
         # FFmpegPCMAudio will read from the read-end of the pipe (r_pipe).
         # The _feed_audio_to_pipe task will write to the write-end (w_pipe).
+        # The audio coming from the AI service is in the format specified by
+        # self._current_response_format when the stream was started.
+        if not self._current_response_format:
+            # This is a fallback for safety, but should not be reached in normal operation
+            # as start_new_audio_stream now requires the format.
+            logger.error(
+                "Cannot prepare playback stream: response format not set. Falling back to 24kHz mono."
+            )
+            self._current_response_format = (24000, 1)
+
+        playback_input_frame_rate, playback_input_channels = (
+            self._current_response_format
+        )
+
         audio_source = FFmpegPCMAudio(
             os.fdopen(r_pipe, "rb"),  # Source for FFmpeg is the read-end of the pipe
             pipe=True,
-            # FFmpeg input options: raw PCM, from PROCESSING format
-            before_options=f"-f {Config.FFMPEG_PCM_FORMAT} -ar {Config.PROCESSING_AUDIO_FRAME_RATE} -ac {Config.PROCESSING_AUDIO_CHANNELS}",
+            # FFmpeg input options: raw PCM, from AI service's output format
+            before_options=f"-f {Config.FFMPEG_PCM_FORMAT} -ar {playback_input_frame_rate} -ac {playback_input_channels}",
             # FFmpeg output options (for Discord): to DISCORD format
             options=f"-ar {Config.DISCORD_AUDIO_FRAME_RATE} -ac {Config.DISCORD_AUDIO_CHANNELS}",
         )
@@ -459,6 +480,7 @@ class AudioManager:
                 f"AudioManager: Cleared _current_stream_id '{self._current_stream_id}' as its playback and cleanup finished."
             )
             self._current_stream_id = None
+            self._current_response_format = None
         else:
             logger.info(
                 f"AudioManager: Stream '{stream_id}' cleanup finished, but _current_stream_id is now '{self._current_stream_id}'. Not clearing _current_stream_id."

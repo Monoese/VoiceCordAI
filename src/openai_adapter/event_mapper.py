@@ -6,9 +6,10 @@ This module provides the OpenAIEventHandlerAdapter class, responsible for:
 - Dispatching these events to appropriate handler methods based on event.type.
 - Adapting the logic from the existing WebSocketEventHandler to work with OpenAI's event structures.
 """
+from __future__ import annotations
 
 import base64
-from typing import Callable, Awaitable, Dict, Optional
+from typing import Callable, Awaitable, Dict, Optional, TYPE_CHECKING
 
 # Using Any for OpenAI event attributes for now, will refine if specific types are confirmed
 # from openai.types.beta.realtime import RealtimeEvent, Error # IDE has trouble finding these
@@ -18,6 +19,10 @@ from typing import Any as RealtimeEvent  # Using Any as a fallback
 
 from src.audio.audio import AudioManager
 from src.utils.logger import get_logger
+
+if TYPE_CHECKING:
+    from src.ai_services.interface import IRealtimeAIServiceManager
+
 
 logger = get_logger(__name__)
 
@@ -30,14 +35,19 @@ class OpenAIEventHandlerAdapter:
     to work with the event types provided by the OpenAI Python library.
     """
 
-    def __init__(self, audio_manager: AudioManager):
+    def __init__(
+        self, audio_manager: AudioManager, manager: "IRealtimeAIServiceManager"
+    ):
         """
         Initializes the OpenAIEventHandlerAdapter.
 
         Args:
             audio_manager: The AudioManager instance to use for audio processing.
+            manager: The parent AI service manager, used to access service-specific
+                     configurations like audio formats.
         """
         self.audio_manager: AudioManager = audio_manager
+        self.manager: "IRealtimeAIServiceManager" = manager
         self._active_response_stream_id: Optional[str] = None
 
         self.EVENT_HANDLERS: Dict[str, Callable[[RealtimeEvent], Awaitable[None]]] = {
@@ -158,7 +168,7 @@ class OpenAIEventHandlerAdapter:
                 f"OpenAIEventHandlerAdapter: Starting new audio stream '{self._active_response_stream_id}' for {event.type}."
             )
             await self.audio_manager.start_new_audio_stream(
-                self._active_response_stream_id
+                self._active_response_stream_id, self.manager.response_audio_format
             )
 
         try:
