@@ -1,6 +1,5 @@
 import asyncio
 import base64
-import subprocess
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -64,51 +63,213 @@ def test_encode_to_base64():
 
 
 @pytest.mark.asyncio
-@patch("subprocess.run")
-async def test_resample_and_convert_audio_success(
-    mock_subprocess_run: MagicMock, audio_manager: AudioManager
+@patch("src.audio.audio.AudioSegment")
+async def test_process_recorded_audio_success(
+    mock_audio_segment_cls: MagicMock, audio_manager: AudioManager
 ):
     """
-    Tests successful audio resampling by mocking the ffmpeg subprocess.
+    Tests successful audio processing using the pydub-based method.
     """
     # Arrange
     raw_audio_data = b"\x01\x02\x03\x04"
-    resampled_audio_data = b"\x05\x06\x07\x08"
-    mock_subprocess_run.return_value = MagicMock(
-        stdout=resampled_audio_data, stderr=b""
-    )
+    processed_audio_data = b"\x05\x06\x07\x08"
+
+    # Mock the chain of pydub calls
+    mock_segment_instance = MagicMock()
+    mock_audio_segment_cls.return_value = mock_segment_instance
+    mock_segment_instance.set_channels.return_value = mock_segment_instance
+    mock_segment_instance.set_frame_rate.return_value = mock_segment_instance
+
+    # Mock the export method to write to the buffer
+    def mock_export(buffer, format):
+        buffer.write(processed_audio_data)
+
+    mock_segment_instance.export.side_effect = mock_export
 
     # Act
-    result = await audio_manager.resample_and_convert_audio(raw_audio_data)
+    result = await audio_manager.process_recorded_audio(raw_audio_data)
 
     # Assert
-    assert result == resampled_audio_data
-    mock_subprocess_run.assert_called_once()
-    args, kwargs = mock_subprocess_run.call_args
-    # Check that ffmpeg was called with the correct parameters
-    assert "ffmpeg" in args[0]
-    assert str(Config.DISCORD_AUDIO_FRAME_RATE) in args[0]
-    assert str(Config.PROCESSING_AUDIO_FRAME_RATE) in args[0]
-    assert kwargs["input"] == raw_audio_data
+    assert result == processed_audio_data
+    mock_audio_segment_cls.assert_called_once_with(
+        data=raw_audio_data,
+        sample_width=Config.SAMPLE_WIDTH,
+        frame_rate=Config.DISCORD_AUDIO_FRAME_RATE,
+        channels=Config.DISCORD_AUDIO_CHANNELS,
+    )
+    mock_segment_instance.set_channels.assert_called_once_with(
+        Config.PROCESSING_AUDIO_CHANNELS
+    )
+    mock_segment_instance.set_frame_rate.assert_called_once_with(
+        Config.PROCESSING_AUDIO_FRAME_RATE
+    )
+    assert mock_segment_instance.export.call_args.kwargs["format"] == "raw"
 
 
 @pytest.mark.asyncio
-@patch("subprocess.run")
-async def test_resample_and_convert_audio_failure(
-    mock_subprocess_run: MagicMock, audio_manager: AudioManager
+@patch("src.audio.audio.AudioSegment")
+async def test_process_recorded_audio_failure(
+    mock_audio_segment_cls: MagicMock, audio_manager: AudioManager
 ):
     """
-    Tests the audio resampling failure path.
+    Tests the failure path of audio processing when pydub fails.
     """
     # Arrange
     raw_audio_data = b"\x01\x02\x03\x04"
-    error_output = b"ffmpeg error message"
-    mock_subprocess_run.side_effect = subprocess.CalledProcessError(
-        1, "ffmpeg", stderr=error_output
-    )
+    error_message = "pydub failed"
+    mock_audio_segment_cls.side_effect = Exception(error_message)
 
     # Act & Assert
     with pytest.raises(RuntimeError) as excinfo:
-        await audio_manager.resample_and_convert_audio(raw_audio_data)
+        await audio_manager.process_recorded_audio(raw_audio_data)
 
-    assert error_output.decode() in str(excinfo.value)
+    assert "Audio processing failed" in str(excinfo.value)
+    assert error_message in str(excinfo.value.__cause__)
+
+
+def test_get_current_playing_response_id(audio_manager: AudioManager):
+    """Tests that the correct response ID is extracted from the stream ID."""
+    # Arrange
+    audio_manager._current_stream_id = "response123-item456"
+
+    # Act
+    response_id = audio_manager.get_current_playing_response_id()
+
+    # Assert
+    assert response_id == "response123"
+
+    # Arrange for None case
+    audio_manager._current_stream_id = None
+
+    # Act
+    response_id = audio_manager.get_current_playing_response_id()
+
+    # Assert
+    assert response_id is None
+
+
+@pytest.mark.asyncio
+async def test_start_new_audio_stream(audio_manager: AudioManager):
+    """Tests starting a new audio stream when none is active."""
+    # Arrange
+    stream_id = "test-stream-1"
+    assert audio_manager._current_stream_id is None
+    assert not audio_manager._playback_control_event.is_set()
+
+    # Act
+    await audio_manager.start_new_audio_stream(stream_id)
+
+    # Assert
+    assert audio_manager._current_stream_id == stream_id
+    assert audio_manager._playback_control_event.is_set()
+
+
+@pytest.mark.asyncio
+async def test_start_new_audio_stream_replaces_old(audio_manager: AudioManager):
+    """Tests that starting a new stream correctly signals the end of the old one."""
+    # Arrange
+    old_stream_id = "old-stream"
+    new_stream_id = "new-stream"
+    await audio_manager.start_new_audio_stream(old_stream_id)
+    audio_manager._playback_control_event.clear()  # Reset for the next action
+
+    # Act
+    await audio_manager.start_new_audio_stream(new_stream_id)
+
+    # Assert
+    assert audio_manager._current_stream_id == new_stream_id
+    assert audio_manager._playback_control_event.is_set()
+    # Check that an EOS marker for the *old* stream was queued
+    assert not audio_manager.audio_chunk_queue.empty()
+    queued_eos = await audio_manager.audio_chunk_queue.get()
+    assert queued_eos == (old_stream_id, None)
+    assert old_stream_id in audio_manager._eos_queued_for_streams
+
+
+@pytest.mark.asyncio
+async def test_add_audio_chunk(audio_manager: AudioManager):
+    """Tests that audio chunks are added to the queue for the current stream."""
+    # Arrange
+    stream_id = "test-stream-1"
+    audio_chunk = b"\xde\xad\xbe\xef"
+    audio_manager._current_stream_id = stream_id
+
+    # Act
+    await audio_manager.add_audio_chunk(audio_chunk)
+
+    # Assert
+    assert not audio_manager.audio_chunk_queue.empty()
+    queued_item = await audio_manager.audio_chunk_queue.get()
+    assert queued_item == (stream_id, audio_chunk)
+
+
+@pytest.mark.asyncio
+async def test_add_audio_chunk_no_stream(audio_manager: AudioManager):
+    """Tests that audio chunks are ignored if no stream is active."""
+    # Arrange
+    audio_chunk = b"\xde\xad\xbe\xef"
+    assert audio_manager._current_stream_id is None
+
+    # Act
+    await audio_manager.add_audio_chunk(audio_chunk)
+
+    # Assert
+    assert audio_manager.audio_chunk_queue.empty()
+
+
+@pytest.mark.asyncio
+async def test_end_audio_stream(audio_manager: AudioManager):
+    """Tests signaling the end of the current audio stream."""
+    # Arrange
+    stream_id = "test-stream-1"
+    audio_manager._current_stream_id = stream_id
+    audio_manager._playback_control_event.clear()
+
+    # Act
+    await audio_manager.end_audio_stream()
+
+    # Assert
+    # Check that an EOS marker was queued
+    assert not audio_manager.audio_chunk_queue.empty()
+    queued_eos = await audio_manager.audio_chunk_queue.get()
+    assert queued_eos == (stream_id, None)
+    # Check that the stream is marked as having EOS queued
+    assert stream_id in audio_manager._eos_queued_for_streams
+    # Check that the playback loop was signaled
+    assert audio_manager._playback_control_event.is_set()
+
+
+@pytest.mark.asyncio
+async def test_end_audio_stream_with_override(audio_manager: AudioManager):
+    """Tests signaling the end of a specific stream using override."""
+    # Arrange
+    audio_manager._current_stream_id = "active-stream"
+    override_stream_id = "override-stream"
+
+    # Act
+    await audio_manager.end_audio_stream(stream_id_override=override_stream_id)
+
+    # Assert
+    assert not audio_manager.audio_chunk_queue.empty()
+    queued_eos = await audio_manager.audio_chunk_queue.get()
+    assert queued_eos == (override_stream_id, None)
+    assert override_stream_id in audio_manager._eos_queued_for_streams
+
+
+@pytest.mark.asyncio
+async def test_end_audio_stream_idempotent(audio_manager: AudioManager):
+    """Tests that signaling EOS for a stream is idempotent."""
+    # Arrange
+    stream_id = "test-stream-1"
+    audio_manager._current_stream_id = stream_id
+
+    # Act
+    await audio_manager.end_audio_stream()
+    await audio_manager.end_audio_stream()  # Second call
+
+    # Assert
+    # There should only be one EOS marker in the queue
+    assert audio_manager.audio_chunk_queue.qsize() == 1
+    await audio_manager.audio_chunk_queue.get()
+    assert audio_manager.audio_chunk_queue.empty()
+    assert stream_id in audio_manager._eos_queued_for_streams
