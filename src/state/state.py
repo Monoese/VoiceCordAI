@@ -89,15 +89,6 @@ class BotState:
         """
         return self._authority_user_id
 
-    @authority_user_id.setter
-    def authority_user_id(self, value: str):
-        """
-        Set the ID of the user who has authority to control the bot.
-
-        Args:
-            value: The user ID to set as the authority
-        """
-        self._authority_user_id = value
 
     @property
     def standby_message(self) -> Optional[Message]:
@@ -130,6 +121,11 @@ class BotState:
         """Atomically resets the authority user to 'anyone'."""
         self._authority_user_id = "anyone"
         self._authority_user_name = "anyone"
+
+    def _set_authority(self, user: discord.User):
+        """Atomically sets the authority user's ID and name."""
+        self._authority_user_id = user.id
+        self._authority_user_name = user.name
 
     def get_message_content(self) -> str:
         """
@@ -228,10 +224,9 @@ class BotState:
                 return False
 
             self._current_state = BotStateEnum.RECORDING
-            self.authority_user_id = (
-                user.id
+            self._set_authority(
+                user
             )  # Assign control to the user who started recording
-            self._authority_user_name = user.name
 
             await self._update_message()  # Update UI
             return True
