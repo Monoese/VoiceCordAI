@@ -73,6 +73,8 @@ async def test_process_recorded_audio_success(
     # Arrange
     raw_audio_data = b"\x01\x02\x03\x04"
     processed_audio_data = b"\x05\x06\x07\x08"
+    target_frame_rate = 16000
+    target_channels = 1
 
     # Mock the chain of pydub calls
     mock_segment_instance = MagicMock()
@@ -87,7 +89,9 @@ async def test_process_recorded_audio_success(
     mock_segment_instance.export.side_effect = mock_export
 
     # Act
-    result = await audio_manager.process_recorded_audio(raw_audio_data)
+    result = await audio_manager.process_recorded_audio(
+        raw_audio_data, target_frame_rate, target_channels
+    )
 
     # Assert
     assert result == processed_audio_data
@@ -97,12 +101,8 @@ async def test_process_recorded_audio_success(
         frame_rate=Config.DISCORD_AUDIO_FRAME_RATE,
         channels=Config.DISCORD_AUDIO_CHANNELS,
     )
-    mock_segment_instance.set_channels.assert_called_once_with(
-        Config.PROCESSING_AUDIO_CHANNELS
-    )
-    mock_segment_instance.set_frame_rate.assert_called_once_with(
-        Config.PROCESSING_AUDIO_FRAME_RATE
-    )
+    mock_segment_instance.set_channels.assert_called_once_with(target_channels)
+    mock_segment_instance.set_frame_rate.assert_called_once_with(target_frame_rate)
     assert mock_segment_instance.export.call_args.kwargs["format"] == "raw"
 
 
@@ -121,7 +121,7 @@ async def test_process_recorded_audio_failure(
 
     # Act & Assert
     with pytest.raises(RuntimeError) as excinfo:
-        await audio_manager.process_recorded_audio(raw_audio_data)
+        await audio_manager.process_recorded_audio(raw_audio_data, 16000, 1)
 
     assert "Audio processing failed" in str(excinfo.value)
     assert error_message in str(excinfo.value.__cause__)
@@ -153,14 +153,16 @@ async def test_start_new_audio_stream(audio_manager: AudioManager):
     """Tests starting a new audio stream when none is active."""
     # Arrange
     stream_id = "test-stream-1"
+    response_format = (24000, 1)
     assert audio_manager._current_stream_id is None
     assert not audio_manager._playback_control_event.is_set()
 
     # Act
-    await audio_manager.start_new_audio_stream(stream_id)
+    await audio_manager.start_new_audio_stream(stream_id, response_format)
 
     # Assert
     assert audio_manager._current_stream_id == stream_id
+    assert audio_manager._current_response_format == response_format
     assert audio_manager._playback_control_event.is_set()
 
 
@@ -170,11 +172,12 @@ async def test_start_new_audio_stream_replaces_old(audio_manager: AudioManager):
     # Arrange
     old_stream_id = "old-stream"
     new_stream_id = "new-stream"
-    await audio_manager.start_new_audio_stream(old_stream_id)
+    response_format = (24000, 1)
+    await audio_manager.start_new_audio_stream(old_stream_id, response_format)
     audio_manager._playback_control_event.clear()  # Reset for the next action
 
     # Act
-    await audio_manager.start_new_audio_stream(new_stream_id)
+    await audio_manager.start_new_audio_stream(new_stream_id, response_format)
 
     # Assert
     assert audio_manager._current_stream_id == new_stream_id
