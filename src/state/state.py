@@ -11,6 +11,7 @@ The state system ensures the bot operates in a predictable manner and
 prevents conflicting operations from occurring simultaneously.
 """
 
+import asyncio
 from enum import Enum
 from typing import Optional
 
@@ -57,6 +58,7 @@ class BotState:
         The bot starts in IDLE state with no specific authority user
         and no standby message.
         """
+        self._lock = asyncio.Lock()
         self._current_state: BotStateEnum = BotStateEnum.IDLE
         self._authority_user_id: Optional[str] = "anyone"  # User ID or "anyone"
         self._authority_user_name: Optional[str] = "anyone"  # User display name
@@ -120,8 +122,9 @@ class BotState:
         Args:
             provider_name: The name of the provider (e.g., "openai", "gemini").
         """
-        self._active_ai_provider_name = provider_name
-        await self._update_message()  # Update UI to reflect the change
+        async with self._lock:
+            self._active_ai_provider_name = provider_name
+            await self._update_message()  # Update UI to reflect the change
 
     def _reset_authority(self):
         """Atomically resets the authority user to 'anyone'."""
@@ -192,16 +195,17 @@ class BotState:
         Returns:
             bool: True if transition was successful, False if bot was not in IDLE state
         """
-        if self._current_state != BotStateEnum.IDLE:
-            # Only allow transition from IDLE state to prevent unexpected state changes.
-            return False
+        async with self._lock:
+            if self._current_state != BotStateEnum.IDLE:
+                # Only allow transition from IDLE state to prevent unexpected state changes.
+                return False
 
-        self._current_state = BotStateEnum.STANDBY
-        self._standby_message = await ctx.send(self.get_message_content())
-        await self._standby_message.add_reaction(
-            "🎙"
-        )  # Add initial reaction for control
-        return True
+            self._current_state = BotStateEnum.STANDBY
+            self._standby_message = await ctx.send(self.get_message_content())
+            await self._standby_message.add_reaction(
+                "🎙"
+            )  # Add initial reaction for control
+            return True
 
     async def start_recording(self, user: discord.User) -> bool:
         """
@@ -218,18 +222,19 @@ class BotState:
         Returns:
             bool: True if transition was successful, False if bot was not in STANDBY state
         """
-        if self._current_state != BotStateEnum.STANDBY:
-            # Only allow transition from STANDBY state.
-            return False
+        async with self._lock:
+            if self._current_state != BotStateEnum.STANDBY:
+                # Only allow transition from STANDBY state.
+                return False
 
-        self._current_state = BotStateEnum.RECORDING
-        self.authority_user_id = (
-            user.id
-        )  # Assign control to the user who started recording
-        self._authority_user_name = user.name
+            self._current_state = BotStateEnum.RECORDING
+            self.authority_user_id = (
+                user.id
+            )  # Assign control to the user who started recording
+            self._authority_user_name = user.name
 
-        await self._update_message()  # Update UI
-        return True
+            await self._update_message()  # Update UI
+            return True
 
     async def stop_recording(self) -> bool:
         """
@@ -243,15 +248,16 @@ class BotState:
         Returns:
             bool: True if transition was successful, False if bot was not in RECORDING state
         """
-        if self._current_state != BotStateEnum.RECORDING:
-            # Only allow transition from RECORDING state.
-            return False
+        async with self._lock:
+            if self._current_state != BotStateEnum.RECORDING:
+                # Only allow transition from RECORDING state.
+                return False
 
-        self._current_state = BotStateEnum.STANDBY
-        self._reset_authority()  # Release specific user control
+            self._current_state = BotStateEnum.STANDBY
+            self._reset_authority()  # Release specific user control
 
-        await self._update_message()  # Update UI
-        return True
+            await self._update_message()  # Update UI
+            return True
 
     async def reset_to_idle(self) -> bool:
         """
@@ -265,23 +271,24 @@ class BotState:
         Returns:
             bool: True if transition was successful, False if bot was already in IDLE state
         """
-        if self._current_state == BotStateEnum.IDLE:
-            # Already idle, no action needed.
-            return False
+        async with self._lock:
+            if self._current_state == BotStateEnum.IDLE:
+                # Already idle, no action needed.
+                return False
 
-        if self._standby_message:
-            try:
-                await self._standby_message.delete()
-            except discord.NotFound:
-                # Message might have been deleted manually, which is fine.
-                pass
-            finally:
-                self._standby_message = None
+            if self._standby_message:
+                try:
+                    await self._standby_message.delete()
+                except discord.NotFound:
+                    # Message might have been deleted manually, which is fine.
+                    pass
+                finally:
+                    self._standby_message = None
 
-        self._current_state = BotStateEnum.IDLE
-        self._reset_authority()  # Reset authority
-        # No UI message to update in IDLE state.
-        return True
+            self._current_state = BotStateEnum.IDLE
+            self._reset_authority()  # Reset authority
+            # No UI message to update in IDLE state.
+            return True
 
     async def _update_message(self):
         """
@@ -325,15 +332,16 @@ class BotState:
         Returns:
             bool: True if transition was successful, False if bot was already in CONNECTION_ERROR state.
         """
-        if self._current_state == BotStateEnum.CONNECTION_ERROR:
-            return False  # Already in the error state
+        async with self._lock:
+            if self._current_state == BotStateEnum.CONNECTION_ERROR:
+                return False  # Already in the error state
 
-        self._current_state = BotStateEnum.CONNECTION_ERROR
-        self._reset_authority()  # Reset authority
+            self._current_state = BotStateEnum.CONNECTION_ERROR
+            self._reset_authority()  # Reset authority
 
-        if self._standby_message:  # Update UI if a standby message exists
-            await self._update_message()
-        return True
+            if self._standby_message:  # Update UI if a standby message exists
+                await self._update_message()
+            return True
 
     async def recover_to_standby(self) -> bool:
         """
@@ -346,18 +354,19 @@ class BotState:
             bool: True if recovery to STANDBY was successful, False otherwise
                   (e.g., not in CONNECTION_ERROR state, or standby message missing).
         """
-        if self._current_state != BotStateEnum.CONNECTION_ERROR:
-            return False  # Can only recover from connection error state
+        async with self._lock:
+            if self._current_state != BotStateEnum.CONNECTION_ERROR:
+                return False  # Can only recover from connection error state
 
-        if not self._standby_message:
-            # If the standby message doesn't exist (e.g., error occurred before it was created,
-            # or it was somehow deleted), we cannot fully recover to standby UI here.
-            # This recovery path assumes the standby message context is still valid.
-            return False
+            if not self._standby_message:
+                # If the standby message doesn't exist (e.g., error occurred before it was created,
+                # or it was somehow deleted), we cannot fully recover to standby UI here.
+                # This recovery path assumes the standby message context is still valid.
+                return False
 
-        self._current_state = BotStateEnum.STANDBY
-        self._reset_authority()
-        await (
-            self._update_message()
-        )  # Update the existing standby message to reflect STANDBY state
-        return True
+            self._current_state = BotStateEnum.STANDBY
+            self._reset_authority()
+            await (
+                self._update_message()
+            )  # Update the existing standby message to reflect STANDBY state
+            return True
