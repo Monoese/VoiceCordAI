@@ -4,112 +4,140 @@ A Discord bot that enables real-time voice conversations between users and vario
 
 ## Features
 
-- Talk with AI (OpenAI GPT-4, Google Gemini) in real-time using your voice
-- Switch between different AI service providers
-- Works directly in Discord voice channels
-- Easy to control using emoji reactions
-- Includes error handling and activity logging
+- Talk with AI (OpenAI GPT-4, Google Gemini) in real-time using your voice.
+- Switch between different AI service providers.
+- Works directly in Discord voice channels.
+- Easy to control using emoji reactions, which mimics a push-to-talk button.
+- Includes error handling and activity logging.
 
-## Prerequisites
+## Getting Started
 
-Before you start, make sure you have:
-- Python 3.8 or newer installed (otherwise you can't use discord-ext-voice-recv library)
-- FFmpeg installed (on windows, you can get it installed using winget by running: winget install -e --id Gyan.FFmpeg)
-- A Discord Bot Token (from Discord Developer Portal)
-- An OpenAI API Key (from OpenAI dashboard: platform.openai.com/api-keys)
-- A Google Gemini API Key (from Google AI Studio: aistudio.google.com/app/apikey)
-- Invited your bot to your Discord server with permissions to: Connect, Speak, Read Messages/View Channels, and Use Voice Activity.
+Follow these steps to set up and run the bot on your local machine or a virtual machine (VM).
 
-## Step-by-Step Installation Guide
+### 1. Prerequisites
 
-1. **Download the Project**
-   - Open your terminal or command prompt
-   - Run the following commands to download the project and navigate into its main folder:
-   ```bash
-   git clone https://github.com/Monoese/VoiceCordAI
-   cd VoiceCordAI
-   ```
+Before you begin, ensure you have the following software installed:
 
-2. **Create a Virtual Environment for the Bot**
-   - This keeps the bot's requirements separate from other Python projects
-   
-   **Windows:**
-   - Create the virtual environment:
-   ```bash
-   py -m venv .venv
-   ```
-   - Activate it:
-   ```bash
-   .\.venv\Scripts\activate
-   ```
-   
-   ---
-   
-   **macOS/Linux:**
-   - Create the virtual environment:
-   ```bash
-   python -m venv .venv
-   ```
-   - Activate it:
-   ```bash
-   source .venv/bin/activate
-   ```
-   
-   Note: When the environment is activated, you'll see `(.venv)` at the start of your command line
+- **Python 3.8 or newer**
+- **FFmpeg** (e.g., `winget install -e --id Gyan.FFmpeg` on Windows)
 
-3. **Install Required Programs**
-   ```bash
-   pip install -r requirements.txt
-   ```
+You will also need to gather API keys and set up your Discord bot.
 
-4. **Set Up Your Bot Settings**
-   - Create a new file named `.env` in the main folder
-   - Open it with any text editor
-   - Add these lines (replace with your actual tokens):
-   ```
-   DISCORD_TOKEN=your_discord_token
-   OPENAI_API_KEY=your_openai_api_key
-   GEMINI_API_KEY=your_gemini_api_key
-   ```
+#### Setting Up API Keys and Discord Bot
 
-## Starting the Bot
+1.  **Discord Bot Token:**
+    - Go to the [Discord Developer Portal](https://discord.com/developers/applications) and create a "New Application".
+    - Go to the "Installation" tab and set the "Install Link" to "None".
+    - Navigate to the "Bot" tab, in "Token" section, click "Reset Token" to obtain a private token and keep it secured.
+    - Within "Bot" tab, Disable "Public Bot" option so that only you can join this bot to servers.
+    - Again, within "Bot" tab, enable "Message Content Intent".
+    - **Invite the bot to your server:** 
+      - Go to the "OAuth2" tab and go to the "OAuth2 URL Generator" section.
+      - Select `bot` as the scope and ensure `Guild Install` is the selected integration type.
+      - In the "Bot Permissions" section, grant the following permissions:
+        - `View Channels`
+        - `Send Messages`
+        - `Add Reactions`
+        - `Connect`
+        - `Speak`
+      - Make sure you have sufficient permission to invite bot to the server you want to use the bot within.
+      - Copy the generated URL and paste it into your browser to add the bot to your server.
 
-1. **Launch the Bot**
-   - Make sure you're in the project folder
-   - Make sure your virtual environment is activated (you see `(.venv)`)
-   - Run the bot using:
-   
-   **Windows:**
-   ```bash
-   py -m src.bot.main
-   ```
-   
-   **macOS/Linux:**
-   ```bash
-   python -m src.bot.main
-   ```
+2.  **OpenAI API Key:**
+    - Obtain your key from the [OpenAI API keys](https://platform.openai.com/api-keys) page.
 
-2. **Available Commands**
-   - `/connect` - Joins your current voice channel, connects to the currently selected AI service, and prepares for voice interaction (standby mode).
-   - `/set <service_provider>` - Sets the AI service provider to use. Options: `openai` or `gemini`. Example: `/set openai`
-   - `/disconnect` - Leaves the voice channel, disconnects from the AI service, and resets the bot to an idle state.
+3.  **Google Gemini API Key:**
+    - Obtain your key from [Google AI Studio](https://aistudio.google.com/app/apikey).
 
-3. **Voice Controls**
-   After using `/connect`, the bot will send a message indicating the active AI provider. React to this message to control recording:
-   - React with 🎙️ to start recording your voice.
-   - React with 🎙️ again to stop recording and send your audio for processing.
-   - React with ❌ to cancel the current recording without sending it.
+*Note: The bot requires at least one API key (`OPENAI_API_KEY` or `GEMINI_API_KEY`) to function. You do not have to provide both.*
 
-## Need Help?
-If you run into any issues, make sure:
-1. Your virtual environment is activated (you should see `(.venv)` at the start of your command line).
-2. All requirements are installed.
-3. Your `.env` file contains valid tokens.
-4. You're in the correct directory when running commands
+### 2. Installation and Configuration
+
+1.  **Clone the Repository**
+    ```bash
+    git clone https://github.com/Monoese/VoiceCordAI
+    cd VoiceCordAI
+    ```
+
+2.  **Set Up a Virtual Environment**
+    Create and activate a virtual environment in the project directory.
+
+    **On Windows:**
+    ```bash
+    # Create the environment
+    py -m venv .venv
+    # Activate it
+    .\.venv\Scripts\activate
+    ```
+
+    **On macOS/Linux:**
+    ```bash
+    # Create the environment
+    python -m venv .venv
+    # Activate it
+    source .venv/bin/activate
+    ```
+    *You should see `(.venv)` at the beginning of your command prompt.*
+
+3.  **Install Dependencies**
+    ```bash
+    pip install -r requirements.txt
+    ```
+
+4.  **Configure API Keys**
+    - Create a file named `.env` in the project's root directory.
+    - Add your credentials to it like this:
+      ```
+      DISCORD_TOKEN=your_discord_token
+      OPENAI_API_KEY=your_openai_api_key
+      GEMINI_API_KEY=your_gemini_api_key
+      ```
+    *Note: The bot requires at least one API key (`OPENAI_API_KEY` or `GEMINI_API_KEY`) to function. You do not need to provide both.*
+
+### 3. Running the Bot
+
+This project can be run locally or on a server/VM. With your virtual environment still activated, start the bot.
+
+**On Windows:**
+```bash
+py -m src.bot.main
+```
+
+**On macOS/Linux:**
+```bash
+python -m src.bot.main
+```
+
+## Usage
+
+### Bot Commands
+
+| Command | Description | Example |
+|---|---|---|
+| `/connect` | Joins your voice channel and enters standby mode. | `/connect` |
+| `/disconnect` | Leaves the voice channel and resets the bot. | `/disconnect` |
+| `/set` | Sets the AI provider (`openai` or `gemini`). OpenAI is recommended. | `/set openai` |
+
+### Voice Controls
+
+After using `/connect`, the bot posts a status message. Use reactions on that message to control it:
+
+- **🎙️ Start Recording:** React to begin capturing your voice.
+- **🎙️ Stop Recording:** React again to stop and send your audio to the AI.
+- **❌ Cancel:** React to stop and discard the current recording.
+
+## Troubleshooting
+
+If you encounter issues, please verify that:
+- Your virtual environment is active (you see `(.venv)` in your terminal).
+- All dependencies from `requirements.txt` are installed.
+- The `.env` file exists and contains valid API keys.
+- The bot was invited to your server with the correct permissions (see Step 1).
+- You are in the project's root directory when running the bot.
 
 ## Acknowledgments
 
-- [OpenAI API](https://platform.openai.com/docs/guides/gpt)
-- [Google Gemini API](https://ai.google.dev/docs/gemini_api_overview)
+- [OpenAI API](https://platform.openai.com/docs/guides/realtime)
+- [Google Gemini API](https://ai.google.dev/gemini-api/docs/live)
 - [discord.py](https://discordpy.readthedocs.io/)
 - [discord-ext-voice-recv](https://github.com/imayhaveborkedit/discord-ext-voice-recv)
