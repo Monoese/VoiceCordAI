@@ -128,7 +128,7 @@ async def test_stop_recording_from_recording(bot_state: BotState):
     mock_message.edit = AsyncMock()
     bot_state._standby_message = mock_message
     bot_state._current_state = BotStateEnum.RECORDING
-    bot_state.authority_user_id = 12345
+    bot_state._authority_user_id = 12345
     bot_state._authority_user_name = "TestUser"
 
     # Act
@@ -167,7 +167,7 @@ async def test_reset_to_idle(bot_state: BotState):
     mock_message.delete = AsyncMock()
     bot_state._standby_message = mock_message
     bot_state._current_state = BotStateEnum.RECORDING
-    bot_state.authority_user_id = 12345
+    bot_state._authority_user_id = 12345
 
     # Act
     success = await bot_state.reset_to_idle()
@@ -189,7 +189,7 @@ def test_is_authorized(bot_state: BotState, mock_user: MagicMock):
     assert bot_state.is_authorized(mock_user) is True
 
     # 2. Test when a specific user is authorized and is the one asking
-    bot_state.authority_user_id = mock_user.id
+    bot_state._authority_user_id = mock_user.id
     assert bot_state.is_authorized(mock_user) is True
 
     # 3. Test when a specific user is authorized and a different user is asking
@@ -208,7 +208,7 @@ async def test_enter_connection_error_state(bot_state: BotState):
     mock_message.edit = AsyncMock()
     bot_state._standby_message = mock_message
     bot_state._current_state = BotStateEnum.STANDBY
-    bot_state.authority_user_id = 12345
+    bot_state._authority_user_id = 12345
 
     # Act
     success = await bot_state.enter_connection_error_state()
