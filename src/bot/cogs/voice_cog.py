@@ -160,7 +160,7 @@ class VoiceCog(commands.Cog):
 
         return False
 
-    async def _process_and_send_audio(
+    async def _send_audio_turn_to_service(
         self, pcm_data: bytes, channel: discord.TextChannel
     ) -> None:
         """
@@ -189,7 +189,7 @@ class VoiceCog(commands.Cog):
             return
         logger.info("Successfully sent audio and requested response from AI service.")
 
-    async def _process_and_dispatch_audio(
+    async def _process_and_send_audio_task(
         self, pcm_data: bytes, channel: discord.TextChannel
     ):
         """
@@ -218,7 +218,7 @@ class VoiceCog(commands.Cog):
             logger.debug(
                 f"Audio processing complete. Processed data size: {len(processed_pcm_data)} bytes."
             )
-            await self._process_and_send_audio(processed_pcm_data, channel)
+            await self._send_audio_turn_to_service(processed_pcm_data, channel)
         except asyncio.CancelledError:
             logger.info("Audio processing task was cancelled.")
         except RuntimeError as e:
@@ -390,7 +390,7 @@ class VoiceCog(commands.Cog):
 
         if pcm_data:
             task = asyncio.create_task(
-                self._process_and_dispatch_audio(pcm_data, reaction.message.channel)
+                self._process_and_send_audio_task(pcm_data, reaction.message.channel)
             )
             self.background_tasks.add(task)
             task.add_done_callback(self.background_tasks.discard)
