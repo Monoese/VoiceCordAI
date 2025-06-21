@@ -1,19 +1,25 @@
-# Ignore Python cache and compiled files
+# Python
 __pycache__/
-*.pyc
-
-# Ignore virtual environment
 .venv/
 
-# Ignore PyCharm settings
+# IDE / Editor
 .idea/
+.vscode/
 
-# Ignore environment variables
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+
+# OS-specific
+.DS_Store
+
+# Logs
+logs/
+
+# Environment
 .env
 
-# Ignore dev related files
+# Development
 docs/
-
-# Ignore logs directory
-logs/
 .aider*
