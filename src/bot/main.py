@@ -11,7 +11,7 @@ The bot is configured to use the VoiceCog for handling voice-related commands an
 """
 
 import asyncio
-from typing import Dict  # Added import
+from typing import Dict
 
 import discord
 from discord.ext import commands
@@ -24,12 +24,11 @@ from src.utils.logger import get_logger
 
 # Import both managers
 from src.openai_adapter.manager import OpenAIRealtimeManager
-from src.gemini_adapter.manager import GeminiRealtimeManager  # Added import
-from src.ai_services.interface import IRealtimeAIServiceManager  # For type hinting
+from src.gemini_adapter.manager import GeminiRealtimeManager
+from src.ai_services.interface import IRealtimeAIServiceManager
 
 
 # Configure discord.py's internal logging.
-# root=False prevents it from reconfiguring the root logger we set up in src.utils.logger.
 discord.utils.setup_logging(level=Config.LOG_CONSOLE_LEVEL, root=False)
 
 logger = get_logger(__name__)
@@ -86,8 +85,8 @@ if Config.AI_SERVICE_PROVIDER not in all_ai_service_managers:
 
 
 # --- Configure Discord Bot ---
-# Intents.all() enables all privileged intents; for production, specify only needed intents.
-intents: discord.Intents = discord.Intents.all()
+intents = discord.Intents.default()
+intents.message_content = True
 bot: commands.Bot = commands.Bot(command_prefix=Config.COMMAND_PREFIX, intents=intents)
 
 
