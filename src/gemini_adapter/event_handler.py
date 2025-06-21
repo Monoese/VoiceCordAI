@@ -7,15 +7,12 @@ processing synthetic events generated from the Gemini Live API stream.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Callable, Awaitable, Dict, TYPE_CHECKING, Union, Optional
+from typing import Callable, Awaitable, Dict, Union, Optional, Tuple
 
 from google.genai import types
 
 from src.audio.audio import AudioManager
 from src.utils.logger import get_logger
-
-if TYPE_CHECKING:
-    from src.ai_services.interface import IRealtimeAIServiceManager
 
 logger = get_logger(__name__)
 
@@ -58,18 +55,20 @@ class GeminiEventHandlerAdapter:
     """
 
     def __init__(
-        self, audio_manager: AudioManager, manager: "IRealtimeAIServiceManager"
+        self,
+        audio_manager: AudioManager,
+        response_audio_format: Tuple[int, int],
     ):
         """
         Initializes the GeminiEventHandlerAdapter.
 
         Args:
             audio_manager: The AudioManager instance to use for audio processing.
-            manager: The parent AI service manager, used to access service-specific
-                     configurations like audio formats.
+            response_audio_format: A tuple containing the (frame_rate, channels)
+                                 for the audio responses from the AI service.
         """
         self.audio_manager: AudioManager = audio_manager
-        self.manager: "IRealtimeAIServiceManager" = manager
+        self.response_audio_format: Tuple[int, int] = response_audio_format
         self._active_turn_id: Optional[str] = None
         self._stream_started_for_turn: bool = False
 
@@ -126,7 +125,7 @@ class GeminiEventHandlerAdapter:
                             f"GeminiEventHandler: First audio chunk received for turn '{self._active_turn_id}'. Starting new audio stream."
                         )
                         await self.audio_manager.start_new_audio_stream(
-                            self._active_turn_id, self.manager.response_audio_format
+                            self._active_turn_id, self.response_audio_format
                         )
                         self._stream_started_for_turn = True
                     else:

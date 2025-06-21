@@ -84,7 +84,9 @@ class GeminiRealtimeManager(IRealtimeAIServiceManager):
             )
 
         self.event_handler_adapter: GeminiEventHandlerAdapter = (
-            GeminiEventHandlerAdapter(self._audio_manager, self)
+            GeminiEventHandlerAdapter(
+                self._audio_manager, self.response_audio_format
+            )
         )
 
         # Initialize connection_handler if gemini_client and model_name are available

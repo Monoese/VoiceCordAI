@@ -52,7 +52,10 @@ class OpenAIRealtimeManager(IRealtimeAIServiceManager):
         )
 
         self.event_handler_adapter: OpenAIEventHandlerAdapter = (
-            OpenAIEventHandlerAdapter(audio_manager=self._audio_manager, manager=self)
+            OpenAIEventHandlerAdapter(
+                audio_manager=self._audio_manager,
+                response_audio_format=self.response_audio_format,
+            )
         )
         self.connection_handler: OpenAIRealtimeConnection = OpenAIRealtimeConnection(
             client=self.openai_client
