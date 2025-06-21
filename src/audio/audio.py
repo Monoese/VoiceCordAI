@@ -601,6 +601,8 @@ class AudioManager:
                             == played_source_stream_id
                         ):
                             current_stream_processor.playback_done_event.set()
+                            # Wake up the main loop to process the end of this stream.
+                            self._playback_control_event.set()
                         else:  # pragma: no cover
                             # This might happen if a new stream started very quickly after an old one stopped,
                             # and a late 'after' callback from the old stream arrives.
@@ -621,19 +623,8 @@ class AudioManager:
                         ),
                     )
 
-                    # Wait until the playback_done_event is set (by the 'after' callback).
-                    # This means the current audio source has finished playing or an error occurred.
-                    await current_stream_processor.playback_done_event.wait()
-                    logger.info(
-                        f"PlaybackLoop: Playback done event received for stream '{current_stream_processor.stream_id}'."
-                    )
-
-                    # Playback is done for this source, so clean it up.
-                    await self._cleanup_playback_stream(current_stream_processor)
-                    current_stream_processor = None
-                    logger.info(
-                        f"PlaybackLoop: Finished processing and cleaning up stream '{target_id_for_new_stream}'."
-                    )
+                    # Playback has been started. The loop will now wait for the next control event.
+                    # The 'after' callback will trigger the next state change (cleanup).
 
                 if not self._current_stream_id and not current_stream_processor:
                     logger.debug(
