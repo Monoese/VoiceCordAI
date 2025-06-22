@@ -221,23 +221,19 @@ class AudioManager:
     ):
         """
         Signals the playback_loop to prepare for a new audio stream.
-        If another stream is active, an EOS marker is queued for it.
+        If another stream is active, it will be gracefully stopped and cleaned up
+        by the playback_loop during the transition.
 
         Args:
             stream_id: A unique identifier for the new audio stream.
             response_format: A tuple (frame_rate, channels) specifying the format
                              of the incoming audio from the AI service.
         """
-        previous_stream_id = self._current_stream_id
-        if previous_stream_id is not None and previous_stream_id != stream_id:
+        if self._current_stream_id is not None and self._current_stream_id != stream_id:
             logger.warning(
-                f"AudioManager: Request to start new stream '{stream_id}' while '{previous_stream_id}' is active. "
-                f"Signaling EOS for previous stream '{previous_stream_id}'."
+                f"AudioManager: Request to start new stream '{stream_id}' while '{self._current_stream_id}' is active. "
+                "The playback loop will handle the transition."
             )
-            # Use the idempotent end_audio_stream to signal the end of the previous stream.
-            await self.end_audio_stream(stream_id_override=previous_stream_id)
-            # The playback_loop, when it awakens, will see the new _current_stream_id
-            # and transition by cleaning up the old stream processor and starting a new one.
 
         self._current_stream_id = stream_id
         self._current_response_format = response_format
