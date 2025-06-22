@@ -18,7 +18,7 @@ from typing import Optional, Union, Dict
 import discord
 import openai
 from discord.ext import commands, tasks
-from google.genai import errors
+from google.genai import errors as gemini_errors
 
 from src.audio.audio import AudioManager
 from src.bot.voice_connection import VoiceConnectionManager
@@ -228,7 +228,7 @@ class VoiceCog(commands.Cog):
             await channel.send("Error processing your audio. Please try again.")
         except (
             openai.OpenAIError,
-            errors.APIError,
+            gemini_errors.APIError,
         ) as e:
             logger.error(
                 f"An unexpected AI service error occurred in the audio processing task: {e}",
@@ -580,7 +580,7 @@ class VoiceCog(commands.Cog):
                 logger.info("Disconnected from AI service.")
             except (
                 openai.OpenAIError,
-                errors.APIError,
+                gemini_errors.APIError,
             ) as e:
                 error_msg = f"An AI service error occurred during disconnect: {e}"
                 errors.append(error_msg)
