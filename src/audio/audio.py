@@ -1,9 +1,7 @@
 import asyncio
 import os
 import base64
-import functools
 import io
-import subprocess
 from typing import Any, Optional, ByteString, Tuple
 from dataclasses import dataclass, field
 
@@ -138,8 +136,9 @@ class AudioManager:
         """
         return self.PCM16Sink()
 
+    @staticmethod
     async def process_recorded_audio(
-        self, raw_audio_data: bytes, target_frame_rate: int, target_channels: int
+        raw_audio_data: bytes, target_frame_rate: int, target_channels: int
     ) -> bytes:
         """
         Converts raw PCM audio from Discord's format into the format required by
@@ -209,6 +208,10 @@ class AudioManager:
         """
         Returns the response_id part of the current target/playing stream ID.
         Assumes _current_stream_id is in the format "response_id-item_id".
+
+        Returns:
+            Optional[str]: The response_id of the current stream, or None if no
+                           stream is active.
         """
         if self._current_stream_id:
             parts = self._current_stream_id.split("-", 1)
@@ -218,7 +221,7 @@ class AudioManager:
 
     async def start_new_audio_stream(
         self, stream_id: str, response_format: Tuple[int, int]
-    ):
+    ) -> None:
         """
         Signals the playback_loop to prepare for a new audio stream.
         If another stream is active, it will be gracefully stopped and cleaned up
@@ -242,8 +245,13 @@ class AudioManager:
         )
         self._playback_control_event.set()
 
-    async def add_audio_chunk(self, audio_chunk: bytes):
-        """Adds an audio chunk to the queue for the stream identified by `_current_stream_id`."""
+    async def add_audio_chunk(self, audio_chunk: bytes) -> None:
+        """
+        Adds an audio chunk to the queue for the stream identified by `_current_stream_id`.
+
+        Args:
+            audio_chunk: The audio data bytes to be added to the queue.
+        """
         current_target_stream_id = self._current_stream_id
         if current_target_stream_id is None:
             logger.warning(
@@ -255,13 +263,16 @@ class AudioManager:
             f"AudioManager: Added chunk of {len(audio_chunk)} bytes to queue for stream {current_target_stream_id}"
         )
 
-    async def end_audio_stream(self, stream_id_override: Optional[str] = None):
+    async def end_audio_stream(self, stream_id_override: Optional[str] = None) -> None:
         """
         Signals the end of an audio stream by placing an EOS (None) marker into the queue.
-        If stream_id_override is provided, it attempts to end that specific stream.
-        Otherwise, it attempts to end the stream identified by `_current_stream_id`.
+
         This method is idempotent: it will only queue an EOS once for a given stream ID
         during its active lifecycle (until it's fully cleaned up).
+
+        Args:
+            stream_id_override: If provided, attempts to end this specific stream ID.
+                                Otherwise, it ends the stream identified by `_current_stream_id`.
         """
         target_stream_id = (
             stream_id_override
@@ -328,8 +339,13 @@ class AudioManager:
             playback_done_event=asyncio.Event(),
         )
 
-    async def _feed_audio_to_pipe(self, stream: _PlaybackStream):
-        """Task to feed audio chunks from the queue to the FFmpeg pipe for a given stream."""
+    async def _feed_audio_to_pipe(self, stream: _PlaybackStream) -> None:
+        """
+        Task to feed audio chunks from the queue to the FFmpeg pipe for a given stream.
+
+        Args:
+            stream: The _PlaybackStream instance whose pipe will receive the audio data.
+        """
         writer_fp = None
         loop = asyncio.get_running_loop()
         feeder_stream_id = stream.stream_id
@@ -386,7 +402,7 @@ class AudioManager:
                     # Write audio data to the pipe in a separate thread to avoid blocking asyncio loop
                     await loop.run_in_executor(None, writer_fp.write, item_data)
                     await loop.run_in_executor(
-                        None, writer_fp.flush
+                        None, lambda *args: writer_fp.flush(), None
                     )  # Ensure data is sent to FFmpeg
                     logger.debug(
                         f"Feeder for '{feeder_stream_id}': Fed {len(item_data)} bytes."
@@ -426,14 +442,23 @@ class AudioManager:
                     )
                     # Closing the writer_fp also closes the underlying stream.pipe_write_fd.
                     # This signals EOF to FFmpeg if it hasn't already exited.
-                    await loop.run_in_executor(None, writer_fp.close)
+                    await loop.run_in_executor(
+                        None, lambda *args: writer_fp.close(), None
+                    )
                 except Exception as e:  # pragma: no cover
                     logger.error(
                         f"Feeder for '{feeder_stream_id}': Error closing pipe writer: {e}"
                     )
 
-    async def _cleanup_playback_stream(self, stream_to_cleanup: _PlaybackStream):
-        """Safely cleans up all resources for a given _PlaybackStream instance."""
+    async def _cleanup_playback_stream(
+        self, stream_to_cleanup: _PlaybackStream
+    ) -> None:
+        """
+        Safely cleans up all resources for a given _PlaybackStream instance.
+
+        Args:
+            stream_to_cleanup: The _PlaybackStream instance to clean up.
+        """
         stream_id = stream_to_cleanup.stream_id
         logger.info(f"Cleaning up playback resources for stream '{stream_id}'")
 
@@ -509,6 +534,9 @@ class AudioManager:
 
         This design ensures that only one audio stream is active at any given time and
         that resources from a previous stream are fully released before a new one begins.
+
+        Args:
+            voice_client: The Discord voice client used for playing audio.
         """
         current_stream_processor: Optional[_PlaybackStream] = None
         try:
@@ -613,9 +641,9 @@ class AudioManager:
                     voice_client.play(
                         current_stream_processor.ffmpeg_audio_source,
                         # Pass the stream_id to the lambda to capture its current value for the callback.
-                        after=lambda e,
+                        after=lambda error,
                         sid=current_stream_processor.stream_id: after_playback_callback(
-                            e, sid
+                            error, sid
                         ),
                     )
 
@@ -648,10 +676,8 @@ class AudioManager:
                 )
                 # We must ensure its playback_done_event is set if voice_client.stop() didn't trigger 'after' or it timed out.
                 if not current_stream_processor.playback_done_event.is_set():
-                    # Force-set playback_done_event if not already set (e.g., if the 'after' callback
-                    # didn't run due to abrupt termination or a timeout while waiting for it).
-                    # This ensures _cleanup_playback_stream, which might await this event,
-                    # can proceed without deadlocking during final cleanup.
+                    # Force-set the event on abrupt exit. This ensures a consistent
+                    # final state, as the normal 'after' callback might not have run.
                     current_stream_processor.playback_done_event.set()
                 await self._cleanup_playback_stream(current_stream_processor)
                 current_stream_processor = None
