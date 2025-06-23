@@ -1,9 +1,10 @@
 import asyncio
-import os
 import base64
 import io
-from typing import Any, Optional, ByteString, Tuple
+import os
 from dataclasses import dataclass, field
+from enum import Enum, auto
+from typing import Any, Optional, ByteString, Tuple, Callable
 
 from discord import FFmpegPCMAudio, User
 from discord.ext import voice_recv
@@ -13,6 +14,14 @@ from src.config.config import Config
 from src.utils.logger import get_logger
 
 logger = get_logger(__name__)
+
+
+class PlaybackState(Enum):
+    """Represents the operational state of the playback loop."""
+
+    IDLE = auto()  # Not playing anything.
+    PLAYING = auto()  # Actively playing an audio stream.
+    STOPPING = auto()  # In the process of stopping a stream and cleaning up resources.
 
 
 @dataclass
@@ -58,6 +67,7 @@ class AudioManager:
         # *expecting* to receive chunks for or has been told to start.
         # This is set by start_new_audio_stream().
         self._current_stream_id: Optional[str] = None
+        self._playback_state: PlaybackState = PlaybackState.IDLE
         self._current_response_format: Optional[Tuple[int, int]] = None
         self._eos_queued_for_streams: set[str] = (
             set()
@@ -90,7 +100,7 @@ class AudioManager:
             """
             return False
 
-        def write(self, user: User, data: Any) -> None:
+        def write(self, _user: User, data: Any) -> None:
             """
             Process incoming audio data from a user.
 
@@ -98,7 +108,7 @@ class AudioManager:
             It accumulates PCM audio data in the audio_data buffer.
 
             Args:
-                user: The Discord user who sent the audio
+                _user: The Discord user who sent the audio
                 data: The audio data packet containing PCM data (discord.VoiceReceivePacket)
             """
             # data.pcm might be None or empty if silence is received from Discord
@@ -172,13 +182,10 @@ class AudioManager:
             logger.error(f"Failed to load raw audio into pydub AudioSegment: {e}")
             raise RuntimeError("Audio processing failed during data loading.") from e
 
-        # 2. Downmix to the number of channels required by the AI service.
         processed_segment = audio_segment.set_channels(target_channels)
 
-        # 3. Resample to the sample rate required by the AI service.
         processed_segment = processed_segment.set_frame_rate(target_frame_rate)
 
-        # 4. Export the processed audio back to raw PCM bytes.
         buffer = io.BytesIO()
         processed_segment.export(buffer, format="raw")  # "raw" corresponds to pcm_s16le
 
@@ -300,7 +307,7 @@ class AudioManager:
             (target_stream_id, None)
         )  # (stream_id, None) is the EOS marker
         self._eos_queued_for_streams.add(target_stream_id)
-        self._playback_control_event.set()  # Signal playback loop to check state
+        self._playback_control_event.set()
 
     def _prepare_new_playback_stream(self, stream_id: str) -> _PlaybackStream:
         """Prepares OS pipes and FFmpegPCMAudio source for a new playback stream."""
@@ -403,7 +410,7 @@ class AudioManager:
                     await loop.run_in_executor(None, writer_fp.write, item_data)
                     await loop.run_in_executor(
                         None, lambda *args: writer_fp.flush(), None
-                    )  # Ensure data is sent to FFmpeg
+                    )
                     logger.debug(
                         f"Feeder for '{feeder_stream_id}': Fed {len(item_data)} bytes."
                     )
@@ -462,7 +469,6 @@ class AudioManager:
         stream_id = stream_to_cleanup.stream_id
         logger.info(f"Cleaning up playback resources for stream '{stream_id}'")
 
-        # 1. Cancel and await the feeder task
         if stream_to_cleanup.feeder_task and not stream_to_cleanup.feeder_task.done():
             logger.debug(f"Cancelling feeder task for stream '{stream_id}'")
             stream_to_cleanup.feeder_task.cancel()
@@ -480,7 +486,6 @@ class AudioManager:
                     exc_info=True,
                 )
 
-        # 2. Cleanup FFmpegPCMAudio source
         # This should close the read-end of the pipe (stream_to_cleanup.pipe_read_fd).
         logger.debug(
             f"Cleaning up FFmpegPCMAudio for stream '{stream_id}' (read pipe fd: {stream_to_cleanup.pipe_read_fd})"
@@ -511,149 +516,166 @@ class AudioManager:
         self._eos_queued_for_streams.discard(stream_id)
         logger.info(f"Finished cleaning up stream '{stream_id}'")
 
+    async def _stop_and_cleanup_processor(
+        self, processor: _PlaybackStream, voice_client: voice_recv.VoiceRecvClient
+    ) -> None:
+        """Stops voice client playback and cleans up all resources for a processor.
+
+        Args:
+            processor: The playback stream processor to clean up.
+            voice_client: The Discord voice client used for playback.
+        """
+        processor_id = processor.stream_id
+        logger.info(
+            f"PlaybackLoop: Stopping and cleaning up processor for '{processor_id}'."
+        )
+        if voice_client.is_playing() or voice_client.is_paused():
+            logger.debug(f"Calling voice_client.stop() for stream '{processor_id}'.")
+            voice_client.stop()
+
+        if not processor.playback_done_event.is_set():
+            logger.debug(
+                f"Waiting for playback_done_event for '{processor_id}' after signaling stop."
+            )
+            try:
+                await asyncio.wait_for(
+                    processor.playback_done_event.wait(),
+                    timeout=5.0,
+                )
+            except asyncio.TimeoutError:  # pragma: no cover
+                logger.warning(
+                    f"Timeout waiting for playback_done_event for '{processor_id}'. Proceeding with cleanup."
+                )
+        await self._cleanup_playback_stream(processor)
+        logger.info(
+            f"Finished stopping and cleaning up processor for '{processor_id}'."
+        )
+
+    def _start_new_processor(
+        self,
+        target_id: str,
+        voice_client: voice_recv.VoiceRecvClient,
+        after_callback: Callable,
+    ) -> _PlaybackStream:
+        """Prepares resources for a new stream and starts playback.
+
+        Args:
+            target_id: The ID for the new stream.
+            voice_client: The Discord voice client to play audio on.
+            after_callback: The callback function to execute when playback finishes.
+
+        Returns:
+            The newly created and started playback stream processor.
+        """
+        logger.info(
+            f"PlaybackLoop: Preparing to start new processor for '{target_id}'."
+        )
+        processor = self._prepare_new_playback_stream(target_id)
+        processor.feeder_task = asyncio.create_task(self._feed_audio_to_pipe(processor))
+
+        logger.info(
+            f"PlaybackLoop: Starting voice_client.play for stream '{target_id}'"
+        )
+        voice_client.play(
+            processor.ffmpeg_audio_source,
+            after=lambda err: after_callback(err, processor.stream_id),
+        )
+        return processor
+
     async def playback_loop(self, voice_client: voice_recv.VoiceRecvClient) -> None:
         """
-        Main loop for managing audio playback.
-
-        This loop operates as a state machine driven by `_current_stream_id`, which acts
-        as the "target" stream to be played. It handles one audio stream at a time,
-        ensuring smooth transitions and proper resource cleanup.
-
-        The loop's cycle is triggered by `_playback_control_event` and has two main phases:
-        1.  **Phase 1: Stop/Transition:** If a stream is currently being processed
-            (`current_stream_processor` exists) but the global target
-            (`_current_stream_id`) has changed or been cleared, this phase stops the
-            current playback and cleans up all associated resources (tasks, pipes, etc.).
-            It relies on the `playback_done_event`, which is set by the `after=`
-            callback of `voice_client.play()`, to know when it's safe to clean up.
-
-        2.  **Phase 2: Start New Stream:** If a new target `_current_stream_id` is set
-            and no stream is currently being processed, this phase prepares all necessary
-            resources for the new stream (creates pipes, FFmpeg source, feeder task)
-            and starts playback.
-
-        This design ensures that only one audio stream is active at any given time and
-        that resources from a previous stream are fully released before a new one begins.
+        Main loop for managing audio playback via an explicit state machine.
+        This loop checks the current playback state and performs actions accordingly.
 
         Args:
             voice_client: The Discord voice client used for playing audio.
         """
         current_stream_processor: Optional[_PlaybackStream] = None
+
+        def after_playback_callback(
+            error: Optional[Exception], played_source_stream_id: str
+        ):
+            """
+            Callback passed to voice_client.play(), triggered on playback end/error.
+            This callback is the primary trigger for transitioning to the STOPPING state.
+            Args:
+                error: The exception that occurred, if any.
+                played_source_stream_id: The ID of the stream that finished playing.
+            """
+            log_msg = f"PlaybackLoop: 'after' callback for stream '{played_source_stream_id}'."
+            if error:  # pragma: no cover
+                log_msg += f" Error: {error}"
+            logger.info(log_msg)
+
+            if (
+                current_stream_processor
+                and current_stream_processor.stream_id == played_source_stream_id
+            ):
+                current_stream_processor.playback_done_event.set()
+                self._playback_state = PlaybackState.STOPPING
+                self._playback_control_event.set()
+            else:  # pragma: no cover
+                logger.warning(
+                    f"PlaybackLoop: 'after' callback for stale stream '{played_source_stream_id}'."
+                )
+
         try:
             while True:
                 await self._playback_control_event.wait()
                 self._playback_control_event.clear()
 
                 logger.debug(
-                    f"PlaybackLoop: Awakened. Target stream: '{self._current_stream_id}'. "
-                    f"Current processor: '{current_stream_processor.stream_id if current_stream_processor else 'None'}'"
+                    f"Playback state machine: Awakened in state {self._playback_state.name}"
                 )
 
-                # --- Phase 1: Stop/Transition Current Stream ---
-                # This phase handles the graceful shutdown of the currently active audio stream processor.
-                # Stopping the voice_client (voice_client.stop()) is key, as it triggers the 'after' callback
-                # associated with the FFmpegPCMAudioSource. This callback, in turn, signals
-                # current_stream_processor.playback_done_event, facilitating an orderly resource cleanup.
-                if current_stream_processor:
-                    processor_id = current_stream_processor.stream_id
-                    global_target_id = self._current_stream_id
-
-                    if global_target_id is None or global_target_id != processor_id:
-                        logger.info(
-                            f"PlaybackLoop: Global target is now '{global_target_id}'. "
-                            f"Current processor for '{processor_id}' needs to stop."
-                        )
-                        if voice_client.is_playing() or voice_client.is_paused():
-                            logger.debug(
-                                f"PlaybackLoop: Calling voice_client.stop() for stream '{processor_id}'."
-                            )
-                            voice_client.stop()  # This will trigger the 'after' callback for the FFmpegPCMAudio source.
-                            # The 'after' callback is responsible for setting current_stream_processor.playback_done_event.
-
-                        # Wait for the 'after' callback to signal playback completion or for a timeout.
-                        # This ensures that resources aren't cleaned up prematurely if discord.py is still using them.
-                        if not current_stream_processor.playback_done_event.is_set():
-                            logger.debug(
-                                f"PlaybackLoop: Waiting for playback_done_event for '{processor_id}' after signaling stop."
-                            )
-                            try:
-                                await asyncio.wait_for(
-                                    current_stream_processor.playback_done_event.wait(),
-                                    timeout=5.0,
-                                )
-                            except asyncio.TimeoutError:  # pragma: no cover
-                                logger.warning(
-                                    f"PlaybackLoop: Timeout waiting for playback_done_event for '{processor_id}'. Proceeding with cleanup."
-                                )
-
-                        # Now, perform full cleanup of the stream processor.
-                        await self._cleanup_playback_stream(current_stream_processor)
-                        current_stream_processor = None
-                        logger.info(
-                            f"PlaybackLoop: Finished stopping and cleaning up processor for '{processor_id}'."
-                        )
-
-                # --- Phase 2: Start New Stream ---
-                if self._current_stream_id and not current_stream_processor:
-                    target_id_for_new_stream = self._current_stream_id
-                    logger.info(
-                        f"PlaybackLoop: Preparing to start new stream processor for target '{target_id_for_new_stream}'."
-                    )
-
-                    current_stream_processor = self._prepare_new_playback_stream(
-                        target_id_for_new_stream
-                    )
-
-                    current_stream_processor.feeder_task = asyncio.create_task(
-                        self._feed_audio_to_pipe(current_stream_processor)
-                    )
-
-                    # Define the 'after' callback for voice_client.play()
-                    # This callback is crucial for signaling when playback of the current source has finished or errored.
-                    def after_playback_callback(
-                        error: Optional[Exception], played_source_stream_id: str
-                    ):
-                        log_msg = f"PlaybackLoop: 'after' callback triggered for played stream '{played_source_stream_id}'."
-                        if error:  # pragma: no cover
-                            log_msg += f" Error: {error}"
-                        logger.info(log_msg)
-
-                        # Ensure this callback is for the currently active stream processor.
+                # State: PLAYING -> Check if we need to transition to STOPPING
+                if self._playback_state == PlaybackState.PLAYING:
+                    if current_stream_processor:
+                        global_target_id = self._current_stream_id
                         if (
-                            current_stream_processor
-                            and current_stream_processor.stream_id
-                            == played_source_stream_id
+                            global_target_id is None
+                            or global_target_id != current_stream_processor.stream_id
                         ):
-                            current_stream_processor.playback_done_event.set()
-                            # Wake up the main loop to process the end of this stream.
-                            self._playback_control_event.set()
-                        else:  # pragma: no cover
-                            # This might happen if a new stream started very quickly after an old one stopped,
-                            # and a late 'after' callback from the old stream arrives.
-                            logger.warning(
-                                f"PlaybackLoop: 'after' callback for '{played_source_stream_id}' but current processor is for "
-                                f"'{current_stream_processor.stream_id if current_stream_processor else 'None'}'. Event might be stale."
+                            logger.info(
+                                "Playback state machine: Target changed. Transitioning from PLAYING to STOPPING."
                             )
+                            self._playback_state = PlaybackState.STOPPING
+                    else:  # pragma: no cover
+                        # This should not happen in normal operation, but acts as a safeguard.
+                        logger.error(
+                            "In PLAYING state but no processor exists. Correcting to IDLE."
+                        )
+                        self._playback_state = PlaybackState.IDLE
 
+                # State: STOPPING -> Clean up and transition to IDLE
+                if self._playback_state == PlaybackState.STOPPING:
+                    logger.info("Playback state machine: Handling STOPPING state.")
+                    if current_stream_processor:
+                        await self._stop_and_cleanup_processor(
+                            current_stream_processor, voice_client
+                        )
+                        current_stream_processor = None
+                    self._playback_state = PlaybackState.IDLE
                     logger.info(
-                        f"PlaybackLoop: Starting voice_client.play for stream '{current_stream_processor.stream_id}'"
+                        "Playback state machine: Transitioned from STOPPING to IDLE."
                     )
-                    voice_client.play(
-                        current_stream_processor.ffmpeg_audio_source,
-                        # Pass the stream_id to the lambda to capture its current value for the callback.
-                        after=lambda error,
-                        sid=current_stream_processor.stream_id: after_playback_callback(
-                            error, sid
-                        ),
-                    )
+                    # We might be able to start a new stream immediately, so we re-set the event.
+                    self._playback_control_event.set()
 
-                    # Playback has been started. The loop will now wait for the next control event.
-                    # The 'after' callback will trigger the next state change (cleanup).
-
-                if not self._current_stream_id and not current_stream_processor:
-                    logger.debug(
-                        "PlaybackLoop: No target stream and no active processor. Idling."
-                    )
+                # State: IDLE -> Check if we can start PLAYING
+                if self._playback_state == PlaybackState.IDLE:
+                    if self._current_stream_id and not current_stream_processor:
+                        logger.info(
+                            "Playback state machine: New target detected. Transitioning from IDLE to PLAYING."
+                        )
+                        current_stream_processor = self._start_new_processor(
+                            self._current_stream_id,
+                            voice_client,
+                            after_playback_callback,
+                        )
+                        self._playback_state = PlaybackState.PLAYING
+                    else:
+                        logger.debug("Playback state machine: Idling.")
 
         except asyncio.CancelledError:  # pragma: no cover
             logger.info("PlaybackLoop: Cancelled.")
@@ -661,24 +683,12 @@ class AudioManager:
             logger.error(f"PlaybackLoop: Unhandled error: {e}", exc_info=True)
         finally:
             logger.info("PlaybackLoop: Exiting final cleanup.")
-            # Ensure voice client is stopped if it was playing/paused.
             if voice_client and (
                 voice_client.is_playing() or voice_client.is_paused()
             ):  # pragma: no cover
-                logger.info(
-                    "PlaybackLoop: Stopping voice_client playback during final exit."
-                )
                 voice_client.stop()
-            # Ensure any active stream processor is cleaned up.
             if current_stream_processor:  # pragma: no cover
-                logger.info(
-                    f"PlaybackLoop: Cleaning up active stream processor for '{current_stream_processor.stream_id}' during final exit."
-                )
-                # We must ensure its playback_done_event is set if voice_client.stop() didn't trigger 'after' or it timed out.
                 if not current_stream_processor.playback_done_event.is_set():
-                    # Force-set the event on abrupt exit. This ensures a consistent
-                    # final state, as the normal 'after' callback might not have run.
                     current_stream_processor.playback_done_event.set()
                 await self._cleanup_playback_stream(current_stream_processor)
-                current_stream_processor = None
             self._playback_control_event.clear()
