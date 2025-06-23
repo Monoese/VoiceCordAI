@@ -445,6 +445,7 @@ class VoiceCog(commands.Cog):
             )
             return
 
+        self.bot_state_manager.start_updater_task()
         logger.info(
             f"Connect command successful for {ctx.author.name}. Bot is in STANDBY."
         )
@@ -562,6 +563,7 @@ class VoiceCog(commands.Cog):
         Args:
             ctx: The command context containing information about the invocation
         """
+        await self.bot_state_manager.stop_updater_task()
         await self.bot_state_manager.reset_to_idle()
         logger.info("Bot state has been reset to IDLE.")
 
