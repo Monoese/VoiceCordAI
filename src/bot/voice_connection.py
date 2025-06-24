@@ -35,7 +35,7 @@ class VoiceConnectionManager:
         self,
         bot: commands.Bot,
         audio_manager: AudioManager,
-    ):
+    ) -> None:
         """
         Initialize the VoiceConnectionManager with required dependencies.
 
@@ -73,21 +73,6 @@ class VoiceConnectionManager:
             if self.voice_client and self.voice_client.is_connected():
                 if self._playback_task is None or self._playback_task.done():
                     logger.info("Starting new playback loop task.")
-                    # --- Temporary Debug Prints ---
-                    logger.debug(
-                        f"VOICE_CONNECTION_DEBUG: Type of self.audio_manager: {type(self.audio_manager)}"
-                    )
-                    logger.debug(
-                        f"VOICE_CONNECTION_DEBUG: Is self.audio_manager None? {self.audio_manager is None}"
-                    )
-                    if self.audio_manager:
-                        logger.debug(
-                            f"VOICE_CONNECTION_DEBUG: Attributes of self.audio_manager: {dir(self.audio_manager)}"
-                        )
-                        logger.debug(
-                            f"VOICE_CONNECTION_DEBUG: Does it have playback_loop? {'playback_loop' in dir(self.audio_manager)}"
-                        )
-                    # --- End Temporary Debug Prints ---
                     self._playback_task = self.bot.loop.create_task(
                         self.audio_manager.playback_loop(self.voice_client)
                     )
@@ -110,6 +95,10 @@ class VoiceConnectionManager:
             logger.info("Not connected to a voice channel.")
             return False
 
+        channel_name = (
+            self.voice_client.channel.name if self.voice_client.channel else "Unknown"
+        )
+
         try:
             if self.voice_client.is_listening():  # Stop any active recording
                 self.voice_client.stop_listening()
@@ -127,10 +116,6 @@ class VoiceConnectionManager:
                     logger.error(f"Error during playback task cancellation: {e_task}")
                 finally:
                     self._playback_task = None
-
-            channel_name = "Unknown"
-            if self.voice_client and self.voice_client.channel:
-                channel_name = self.voice_client.channel.name
 
             await self.voice_client.disconnect()
             logger.info(f"Disconnected from voice channel: {channel_name}")
