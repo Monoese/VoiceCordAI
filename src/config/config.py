@@ -129,7 +129,15 @@ class Config:
 
     @classmethod
     def validate(cls) -> None:
-        """Validate required configuration variables."""
+        """Validate required configuration variables.
+
+        This method checks that all critical configuration variables are set
+        and have valid values. It is called automatically when the module
+        is imported.
+
+        Raises:
+            ConfigError: If a required configuration is missing or invalid.
+        """
         if not cls.DISCORD_TOKEN:
             raise ConfigError("DISCORD_TOKEN environment variable not set or empty.")
 
@@ -154,6 +162,27 @@ class Config:
         elif cls.AI_SERVICE_PROVIDER == "gemini" and not cls.GEMINI_API_KEY:
             raise ConfigError(
                 "AI_SERVICE_PROVIDER is set to 'gemini', but GEMINI_API_KEY is missing."
+            )
+
+        # Validate logging configuration
+        if not isinstance(cls.LOG_MAX_SIZE, int):
+            raise ConfigError(
+                f"LOG_MAX_SIZE must be an int, but got {type(cls.LOG_MAX_SIZE).__name__}."
+            )
+        if not isinstance(cls.LOG_BACKUP_COUNT, int):
+            raise ConfigError(
+                f"LOG_BACKUP_COUNT must be an int, but got {type(cls.LOG_BACKUP_COUNT).__name__}."
+            )
+
+        if isinstance(cls.LOG_LEVEL, str):
+            # Check if the string is a valid log level name
+            if not isinstance(logging.getLevelName(cls.LOG_LEVEL.upper()), int):
+                raise ConfigError(
+                    f"Invalid log level string from Config: '{cls.LOG_LEVEL}'"
+                )
+        elif not isinstance(cls.LOG_LEVEL, int):
+            raise ConfigError(
+                f"LOG_LEVEL must be a str or int, but got {type(cls.LOG_LEVEL).__name__}."
             )
 
 
