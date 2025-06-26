@@ -63,22 +63,14 @@ class OpenAIRealtimeManager(IRealtimeAIServiceManager):
 
     async def _get_active_conn(self) -> Optional[AsyncRealtimeConnection]:
         """Helper to get the active connection object if connected."""
-        if not self._is_connected_flag:
-            logger.debug("_get_active_conn: Not connected based on internal flag.")
-            return None
-
-        if self.connection_handler.is_connected():
+        if self.is_connected():
             conn = self.connection_handler.get_active_connection()
             if conn:
                 return conn
             else:
                 logger.warning(
-                    "_get_active_conn: _is_connected_flag is True, but connection_handler.get_active_connection returned None."
+                    "_get_active_conn: is_connected() is True, but get_active_connection() returned None."
                 )
-        else:
-            logger.warning(
-                "_get_active_conn: _is_connected_flag is True, but connection_handler.is_connected is False. State inconsistency."
-            )
         return None
 
     async def connect(self) -> bool:
@@ -86,7 +78,7 @@ class OpenAIRealtimeManager(IRealtimeAIServiceManager):
         Establishes a connection to the OpenAI Realtime API and initializes the session.
         """
         logger.info("OpenAIRealtimeManager: Attempting to connect...")
-        if self._is_connected_flag:
+        if self.is_connected():
             logger.info("OpenAIRealtimeManager: Already connected.")
             return True
 
@@ -116,24 +108,20 @@ class OpenAIRealtimeManager(IRealtimeAIServiceManager):
                             exc_info=True,
                         )
                         await self.connection_handler.disconnect()
-                        self._is_connected_flag = False
                         return False
                 else:
                     logger.error(
                         "Failed to get active connection object from connection_handler for session update, though handler reported connected."
                     )
                     await self.connection_handler.disconnect()
-                    self._is_connected_flag = False
                     return False
 
-            self._is_connected_flag = True
             return True
         except asyncio.TimeoutError:
             logger.warning(
                 f"OpenAIRealtimeManager: Failed to establish connection within {timeout}s timeout."
             )
             await self.connection_handler.disconnect()
-            self._is_connected_flag = False
             return False
 
     async def disconnect(self) -> None:
@@ -142,8 +130,13 @@ class OpenAIRealtimeManager(IRealtimeAIServiceManager):
         """
         logger.info("OpenAIRealtimeManager: Attempting to disconnect...")
         await self.connection_handler.disconnect()
-        self._is_connected_flag = False
         logger.info("OpenAIRealtimeManager: Disconnected.")
+
+    def is_connected(self) -> bool:
+        """
+        Checks if the manager is currently connected by delegating to the connection handler.
+        """
+        return self.connection_handler.is_connected()
 
     async def send_audio_chunk(self, audio_data: bytes) -> bool:
         """

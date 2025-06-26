@@ -40,9 +40,6 @@ class IRealtimeAIServiceManager(ABC):
         """
         self._audio_manager: AudioManager = audio_manager
         self._service_config: Dict[str, Any] = service_config
-        self._is_connected_flag: bool = (
-            False  # Internal state managed by implementations
-        )
 
         # --- Audio Format Configuration ---
         # Directly access configuration keys. A KeyError will be raised if a key is
@@ -87,8 +84,7 @@ class IRealtimeAIServiceManager(ABC):
 
         Implementations should handle all necessary setup, including authentication
         and sending any initial configuration or session parameters derived from
-        `self._service_config`. Upon successful connection and session initialization,
-        `self._is_connected_flag` should be set to True.
+        `self._service_config`.
 
         Returns:
             True if the connection and session setup were successful, False otherwise.
@@ -101,22 +97,22 @@ class IRealtimeAIServiceManager(ABC):
         Closes the connection to the AI service and cleans up any associated resources.
 
         Implementations should ensure that all tasks related to the connection are
-        properly terminated and `self._is_connected_flag` is set to False.
+        properly terminated.
         """
         pass
 
+    @abstractmethod
     def is_connected(self) -> bool:
         """
         Checks if the manager is currently connected to the AI service.
 
-        This method relies on the `_is_connected_flag` which should be accurately
-        maintained by the `connect` and `disconnect` methods of the concrete
-        implementation.
+        Implementations should provide the logic to accurately report the
+        connection status of the underlying service.
 
         Returns:
-            True if connected (i.e., `_is_connected_flag` is True), False otherwise.
+            True if connected, False otherwise.
         """
-        return self._is_connected_flag
+        pass
 
     @abstractmethod
     async def send_audio_chunk(self, audio_data: bytes) -> bool:

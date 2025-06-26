@@ -107,24 +107,14 @@ class GeminiRealtimeManager(IRealtimeAIServiceManager):
         self,
     ) -> Optional[genai.live.AsyncSession]:
         """Helper to get the active session object from the connection handler."""
-        if not self._is_connected_flag or not self.connection_handler:
-            logger.debug(
-                "_get_active_session: Not connected or connection_handler not initialized."
-            )
-            return None
-
-        if self.connection_handler.is_connected():
+        if self.is_connected():
             session = self.connection_handler.get_active_session()
             if session:
                 return session
             else:
                 logger.warning(
-                    "_get_active_session: _is_connected_flag is True, but connection_handler.get_active_session returned None."
+                    "_get_active_session: is_connected() is True, but get_active_session() returned None."
                 )
-        else:
-            logger.warning(
-                "_get_active_session: _is_connected_flag is True, but connection_handler.is_connected is False. State inconsistency."
-            )
         return None
 
     async def connect(self) -> bool:
@@ -132,7 +122,7 @@ class GeminiRealtimeManager(IRealtimeAIServiceManager):
         Establishes a connection to the Gemini Live API via the connection handler.
         """
         logger.info("GeminiRealtimeManager: Attempting to connect...")
-        if self._is_connected_flag:
+        if self.is_connected():
             logger.info("GeminiRealtimeManager: Already connected.")
             return True
 
@@ -166,14 +156,12 @@ class GeminiRealtimeManager(IRealtimeAIServiceManager):
             logger.info(
                 "GeminiRealtimeManager: Connection successfully established with handler."
             )
-            self._is_connected_flag = True
             return True
         except asyncio.TimeoutError:
             logger.warning(
                 f"GeminiRealtimeManager: Failed to establish connection within {timeout}s timeout."
             )
             await self.connection_handler.disconnect()  # Ensure cleanup
-            self._is_connected_flag = False
             return False
 
     async def disconnect(self) -> None:
@@ -183,8 +171,16 @@ class GeminiRealtimeManager(IRealtimeAIServiceManager):
         logger.info("GeminiRealtimeManager: Attempting to disconnect...")
         if self.connection_handler:
             await self.connection_handler.disconnect()
-        self._is_connected_flag = False
         logger.info("GeminiRealtimeManager: Disconnected.")
+
+    def is_connected(self) -> bool:
+        """
+        Checks if the manager is currently connected by delegating to the connection handler.
+        """
+        # connection_handler could be None if initialization failed.
+        if not self.connection_handler:
+            return False
+        return self.connection_handler.is_connected()
 
     async def send_audio_chunk(self, audio_data: bytes) -> bool:
         """
