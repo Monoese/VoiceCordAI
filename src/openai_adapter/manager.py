@@ -93,51 +93,48 @@ class OpenAIRealtimeManager(IRealtimeAIServiceManager):
         await self.connection_handler.connect(self.event_handler_adapter.dispatch_event)
 
         timeout = self._service_config.get("connection_timeout", 30.0)
-        wait_interval = 0.1
-        max_attempts = int(timeout / wait_interval)
+        try:
+            await asyncio.wait_for(
+                self.connection_handler.wait_until_connected(), timeout=timeout
+            )
+            logger.info(
+                "OpenAIRealtimeManager: Connection successfully established with handler."
+            )
 
-        for attempt in range(max_attempts):
-            if self.connection_handler.is_connected():
-                logger.info(
-                    "OpenAIRealtimeManager: Connection successfully established with handler."
-                )
-
-                initial_session_data = self._service_config.get("initial_session_data")
-                if initial_session_data:
-                    conn_obj = self.connection_handler.get_active_connection()
-                    if conn_obj:
-                        try:
-                            await conn_obj.session.update(session=initial_session_data)
-                            logger.info(
-                                f"Sent initial session.update: {initial_session_data}"
-                            )
-                        except Exception as e:
-                            logger.error(
-                                f"Error sending initial session.update: {e}",
-                                exc_info=True,
-                            )
-                            await self.connection_handler.disconnect()
-                            self._is_connected_flag = False
-                            return False
-                    else:
+            initial_session_data = self._service_config.get("initial_session_data")
+            if initial_session_data:
+                conn_obj = self.connection_handler.get_active_connection()
+                if conn_obj:
+                    try:
+                        await conn_obj.session.update(session=initial_session_data)
+                        logger.info(
+                            f"Sent initial session.update: {initial_session_data}"
+                        )
+                    except Exception as e:
                         logger.error(
-                            "Failed to get active connection object from connection_handler for session update, though handler reported connected."
+                            f"Error sending initial session.update: {e}",
+                            exc_info=True,
                         )
                         await self.connection_handler.disconnect()
                         self._is_connected_flag = False
                         return False
+                else:
+                    logger.error(
+                        "Failed to get active connection object from connection_handler for session update, though handler reported connected."
+                    )
+                    await self.connection_handler.disconnect()
+                    self._is_connected_flag = False
+                    return False
 
-                self._is_connected_flag = True
-                return True
-            if attempt < max_attempts - 1:
-                await asyncio.sleep(wait_interval)
-
-        logger.warning(
-            f"OpenAIRealtimeManager: Failed to establish connection within {timeout}s timeout."
-        )
-        await self.connection_handler.disconnect()
-        self._is_connected_flag = False
-        return False
+            self._is_connected_flag = True
+            return True
+        except asyncio.TimeoutError:
+            logger.warning(
+                f"OpenAIRealtimeManager: Failed to establish connection within {timeout}s timeout."
+            )
+            await self.connection_handler.disconnect()
+            self._is_connected_flag = False
+            return False
 
     async def disconnect(self) -> None:
         """
@@ -248,12 +245,6 @@ class OpenAIRealtimeManager(IRealtimeAIServiceManager):
             await conn.send(payload)
             logger.info(f"Sent response.cancel (payload: {payload})")
             return True
-        except AttributeError:
-            logger.error(
-                "The 'send' method is not available on the connection object. "
-                "This method for cancelling responses might need updating based on library capabilities."
-            )
-            return False
         except Exception as e:
             logger.error(f"Error sending response.cancel: {e}", exc_info=True)
             return False

@@ -45,6 +45,7 @@ class OpenAIRealtimeConnection:
 
         self._connection_object: Optional[OpenAIConnectionObject] = None
         self._event_loop_task: Optional[asyncio.Task] = None
+        self._connected_event = asyncio.Event()
         self._is_attempting_connection: bool = False
         self._shutdown_signal = asyncio.Event()
 
@@ -103,6 +104,7 @@ class OpenAIRealtimeConnection:
                     model=self.model_name
                 ) as conn:
                     self._connection_object = conn
+                    self._connected_event.set()
                     logger.info(
                         "Successfully connected to OpenAI Realtime API. Resetting retry delay."
                     )
@@ -131,6 +133,7 @@ class OpenAIRealtimeConnection:
             finally:
                 # Always ensure the connection object is cleared when a connection is lost.
                 self._connection_object = None
+                self._connected_event.clear()
 
             # If a shutdown is requested, exit the while loop immediately.
             if self._shutdown_signal.is_set():
@@ -187,7 +190,11 @@ class OpenAIRealtimeConnection:
             True if the connection object exists (i.e., within an active 'async with' block),
             False otherwise.
         """
-        return self._connection_object is not None
+        return self._connected_event.is_set()
+
+    async def wait_until_connected(self) -> None:
+        """Blocks until the connection is established."""
+        await self._connected_event.wait()
 
     def get_active_connection(self) -> Optional[OpenAIConnectionObject]:
         """

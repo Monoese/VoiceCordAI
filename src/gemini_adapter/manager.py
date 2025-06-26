@@ -159,25 +159,22 @@ class GeminiRealtimeManager(IRealtimeAIServiceManager):
         await self.connection_handler.connect(self.event_handler_adapter.dispatch_event)
 
         timeout = self._service_config.get("connection_timeout", 30.0)
-        wait_interval = 0.1
-        max_attempts = int(timeout / wait_interval)
-
-        for attempt in range(max_attempts):
-            if self.connection_handler.is_connected():
-                logger.info(
-                    "GeminiRealtimeManager: Connection successfully established with handler."
-                )
-                self._is_connected_flag = True
-                return True
-            if attempt < max_attempts - 1:
-                await asyncio.sleep(wait_interval)
-
-        logger.warning(
-            f"GeminiRealtimeManager: Failed to establish connection within {timeout}s timeout."
-        )
-        await self.connection_handler.disconnect()  # Ensure cleanup
-        self._is_connected_flag = False
-        return False
+        try:
+            await asyncio.wait_for(
+                self.connection_handler.wait_until_connected(), timeout=timeout
+            )
+            logger.info(
+                "GeminiRealtimeManager: Connection successfully established with handler."
+            )
+            self._is_connected_flag = True
+            return True
+        except asyncio.TimeoutError:
+            logger.warning(
+                f"GeminiRealtimeManager: Failed to establish connection within {timeout}s timeout."
+            )
+            await self.connection_handler.disconnect()  # Ensure cleanup
+            self._is_connected_flag = False
+            return False
 
     async def disconnect(self) -> None:
         """
