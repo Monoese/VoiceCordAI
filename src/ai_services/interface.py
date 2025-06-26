@@ -22,7 +22,7 @@ class IRealtimeAIServiceManager(ABC):
     It also defines properties for retrieving service-specific audio formats.
     """
 
-    def __init__(self, audio_manager: AudioManager, service_config: Dict[str, Any]):
+    def __init__(self, audio_manager: AudioManager, service_config: Dict[str, Any]) -> None:
         """
         Initializes the AI service manager.
 
@@ -183,8 +183,6 @@ class IRealtimeAIServiceManager(ABC):
         Attempts to cancel any AI response that is currently being generated or streamed.
 
         Implementations should send the appropriate cancellation command to the AI service.
-        This method should also coordinate with the `AudioManager` (via `self._audio_manager`)
-        to stop any local playback of audio from the AI service if a cancellation is initiated.
         For services where a direct client-side cancellation API is not available or limited,
         this method should perform a best-effort cancellation (e.g., stop local playback,
         cease sending further data if applicable).
