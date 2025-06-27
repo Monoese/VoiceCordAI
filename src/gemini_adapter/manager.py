@@ -213,61 +213,6 @@ class GeminiRealtimeManager(IRealtimeAIServiceManager):
             )
             return False
 
-    async def send_text_message(self, text: str, finalize_turn: bool) -> bool:
-        """
-        Sends a text message to the Gemini Live API.
-        This is a placeholder for now, as the primary focus is audio.
-        If `finalize_turn` is True, it could signal activity_end or audio_stream_end.
-        """
-        session = await self._get_active_session()
-        if (
-            not session
-        ):  # Check if session is None, implying not connected or session not available
-            logger.error(
-                "GeminiRealtimeManager: Cannot send text message, not connected or session not available."
-            )
-            return False
-
-        logger.debug(
-            f"send_text_message called with text: '{text}', finalize_turn: {finalize_turn}. This is a placeholder for Gemini audio focus."
-        )
-
-        # The `doc.md` suggests `send_client_content` for non-realtime turn-based content,
-        # or `send_realtime_input(text=...)` for realtime text.
-        # Since this interface method is generic, and our focus is audio,
-        # we'll keep it minimal. If `finalize_turn` is true, we can mimic
-        # ending the audio stream as if text was the final part of a spoken turn.
-        if finalize_turn:
-            try:
-                # Option 2: If text is just a signal to finalize, and no actual text content is expected by Gemini
-                # in this audio-centric flow, just send audio_stream_end.
-                # This aligns with the idea that text might be a secondary signal.
-                # For now, let's assume text itself isn't sent, but finalize_turn is honored.
-                if text:  # Log if text was provided but not sent
-                    logger.info(
-                        f"Text content '{text}' provided to send_text_message but not sent to Gemini in this audio-focused placeholder."
-                    )
-
-                await session.send_realtime_input(
-                    audio_stream_end=True
-                )  # Or activity_end=True
-                logger.info(
-                    "GeminiRealtimeManager: Sent audio_stream_end=True due to send_text_message with finalize_turn=True."
-                )
-                return True
-            except Exception as e:
-                logger.error(
-                    f"GeminiRealtimeManager: Error in send_text_message (finalizing turn): {e}",
-                    exc_info=True,
-                )
-                return False
-        else:
-            # If not finalizing turn, and we are not sending text, this is a no-op.
-            if text:
-                logger.info(
-                    f"Text content '{text}' provided to send_text_message (finalize_turn=False) but not sent to Gemini in this audio-focused placeholder."
-                )
-            return True  # Successfully did nothing as per placeholder nature.
 
     async def finalize_input_and_request_response(self) -> bool:
         """

@@ -160,41 +160,6 @@ class OpenAIRealtimeManager(IRealtimeAIServiceManager):
             logger.error(f"Error sending input_audio_buffer.append: {e}", exc_info=True)
             return False
 
-    async def send_text_message(self, text: str, finalize_turn: bool) -> bool:
-        """
-        Sends a text message. OpenAI's real-time API might not directly support
-        this in the same way as audio. This is a placeholder or needs specific mapping.
-        Using conversation.item.create for now if text is provided.
-        The `finalize_turn` parameter is not directly used by OpenAI's `conversation.item.create`
-        in the same way as Gemini's `turn_complete`.
-        """
-        conn = await self._get_active_conn()
-        if not conn:
-            logger.error("Cannot send text message: Not connected.")
-            return False
-
-        if not text:
-            logger.warning("send_text_message called with empty text.")
-            return False
-
-        item_data = {
-            "type": "message",
-            "role": "user",
-            "content": [{"type": "input_text", "text": text}],
-        }
-        try:
-            await conn.conversation.item.create(item=item_data)
-            logger.info(
-                f"Sent conversation.item.create for text message: {text} (finalize_turn: {finalize_turn})"
-            )
-            if finalize_turn:
-                return await self.finalize_input_and_request_response()
-            return True
-        except Exception as e:
-            logger.error(
-                f"Error sending conversation.item.create for text: {e}", exc_info=True
-            )
-            return False
 
     async def finalize_input_and_request_response(self) -> bool:
         """

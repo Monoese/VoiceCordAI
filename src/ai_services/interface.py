@@ -133,27 +133,6 @@ class IRealtimeAIServiceManager(ABC):
         pass
 
     @abstractmethod
-    async def send_text_message(self, text: str, finalize_turn: bool) -> bool:
-        """
-        Sends a text message to the AI service.
-
-        This can be used for user text input or bot-generated text prompts.
-        The `finalize_turn` parameter indicates if this message should conclude
-        the current speaker's turn and prompt the AI for a response.
-
-        Args:
-            text: The text content to send.
-            finalize_turn: If True, signals that this text message concludes the
-                           current turn, and the AI should process and respond.
-                           (e.g., for Gemini, this maps to `turn_complete=True`).
-                           If False, the message is sent as part of an ongoing turn.
-
-        Returns:
-            True if the text message was successfully sent, False otherwise.
-        """
-        pass
-
-    @abstractmethod
     async def finalize_input_and_request_response(self) -> bool:
         """
         Signals to the AI service that all input for the current turn has been provided
