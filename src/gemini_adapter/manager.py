@@ -42,46 +42,29 @@ class GeminiRealtimeManager(IRealtimeAIServiceManager):
         Args:
             audio_manager: An instance of AudioManager, required by the event handler.
             service_config: Configuration specific to this service instance.
-                            Expected keys:
-                            - "api_key": Gemini API key.
-                            - "model_name": Name of the Gemini model to use.
-                            - "live_connect_config": Dict for genai.types.LiveConnectConfig parameters.
+
+        Raises:
+            ValueError: If the API key or model name is missing in the configuration.
         """
         super().__init__(audio_manager, service_config)
 
-        self.api_key: Optional[str] = self._service_config.get("api_key")
-        self.model_name: Optional[str] = self._service_config.get("model_name")
+        self.api_key: str = self._service_config.get("api_key")
+        if not self.api_key:
+            raise ValueError("Gemini API key is missing in the service configuration.")
+
+        self.model_name: str = self._service_config.get("model_name")
+        if not self.model_name:
+            raise ValueError(
+                "Gemini model name is missing in the service configuration."
+            )
+
         self.live_connect_config_params: Dict[str, Any] = self._service_config.get(
             "live_connect_config", {}
         )
 
-        if not self.api_key:
-            logger.warning(
-                "Gemini API key not found in service_config. Falling back to Config.GEMINI_API_KEY (if defined)."
-            )
-            # This assumes GEMINI_API_KEY will be added to Config class later
-            self.api_key = getattr(Config, "GEMINI_API_KEY", None)
-
-        if not self.api_key:
-            # If still no API key, log an error. Connection will likely fail.
-            logger.error(
-                "Gemini API key is not configured. GeminiRealtimeManager will not be able to connect."
-            )
-            # Initialization can proceed, but connect() will fail or not be attempted.
-
-        self.gemini_client: Optional[genai.Client] = None
-        if self.api_key:
-            try:
-                # Initialize client directly with API key
-                self.gemini_client = genai.Client(api_key=self.api_key)
-                logger.info("Gemini client initialized with API key.")
-            except Exception as e:
-                logger.error(f"Failed to initialize Gemini client: {e}", exc_info=True)
-                # self.gemini_client remains None
-        else:
-            logger.warning(
-                "Gemini API key not available. GeminiRealtimeManager will not be able to connect."
-            )
+        # Let genai.Client raise its own exception on an invalid key
+        self.gemini_client: genai.Client = genai.Client(api_key=self.api_key)
+        logger.info("Gemini client initialized with API key.")
 
         self.event_handler_adapter: GeminiEventHandlerAdapter = (
             GeminiEventHandlerAdapter(
@@ -89,19 +72,11 @@ class GeminiRealtimeManager(IRealtimeAIServiceManager):
             )
         )
 
-        # Initialize connection_handler if gemini_client and model_name are available
-        if self.gemini_client and self.model_name:
-            self.connection_handler: GeminiRealtimeConnection = GeminiRealtimeConnection(
-                gemini_client=self.gemini_client,
-                model_name=self.model_name,
-                live_connect_config_params=self.live_connect_config_params,
-            )
-        else:
-            logger.error(
-                "GeminiRealtimeManager: Cannot initialize ConnectionHandler due to missing client or model_name."
-            )
-            # This state will prevent connection attempts.
-            self.connection_handler = None  # type: ignore # Explicitly None if not initializable
+        self.connection_handler: GeminiRealtimeConnection = GeminiRealtimeConnection(
+            gemini_client=self.gemini_client,
+            model_name=self.model_name,
+            live_connect_config_params=self.live_connect_config_params,
+        )
 
     async def _get_active_session(
         self,

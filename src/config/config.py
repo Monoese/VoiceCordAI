@@ -147,23 +147,6 @@ class Config:
                 f"Unsupported AI_SERVICE_PROVIDER: {cls.AI_SERVICE_PROVIDER}. Must be 'openai' or 'gemini'."
             )
 
-        # Ensure that at least one of the AI service API keys is configured
-        if not cls.OPENAI_API_KEY and not cls.GEMINI_API_KEY:
-            raise ConfigError(
-                "Neither OPENAI_API_KEY nor GEMINI_API_KEY environment variables are set. "
-                "At least one AI service API key is required."
-            )
-
-        # Validate that the selected AI_SERVICE_PROVIDER has its API key configured
-        if cls.AI_SERVICE_PROVIDER == "openai" and not cls.OPENAI_API_KEY:
-            raise ConfigError(
-                "AI_SERVICE_PROVIDER is set to 'openai', but OPENAI_API_KEY is missing."
-            )
-        elif cls.AI_SERVICE_PROVIDER == "gemini" and not cls.GEMINI_API_KEY:
-            raise ConfigError(
-                "AI_SERVICE_PROVIDER is set to 'gemini', but GEMINI_API_KEY is missing."
-            )
-
         # Validate logging configuration
         if not isinstance(cls.LOG_MAX_SIZE, int):
             raise ConfigError(

@@ -50,7 +50,7 @@ class VoiceCog(commands.Cog):
         bot: commands.Bot,
         audio_manager: AudioManager,
         bot_state_manager: BotState,
-        ai_service_managers: Dict[str, IRealtimeAIServiceManager],
+        ai_service_factories: Dict[str, tuple],
     ):
         """
         Initialize the VoiceCog with required dependencies.
@@ -59,31 +59,16 @@ class VoiceCog(commands.Cog):
             bot: The Discord bot instance this cog is attached to
             audio_manager: Handles audio processing and playback
             bot_state_manager: Manages the bot's state transitions
-            ai_service_managers: A dictionary of available AI service managers,
+            ai_service_factories: A dictionary of factories for creating AI service managers,
                                  keyed by provider name (e.g., "openai", "gemini").
         """
         self.bot = bot
         self.audio_manager = audio_manager
         self.bot_state_manager = bot_state_manager
-        self.all_ai_service_managers: Dict[str, IRealtimeAIServiceManager] = (
-            ai_service_managers
-        )
+        self.ai_service_factories = ai_service_factories
 
-        # Set the active AI service manager based on config
-        default_provider = Config.AI_SERVICE_PROVIDER
-        if default_provider not in self.all_ai_service_managers:
-            # This should ideally be caught in main.py, but as a safeguard
-            logger.error(
-                f"Default AI provider '{default_provider}' not found in provided managers. Falling back to first available or raising error."
-            )
-            raise ValueError(
-                f"Default AI provider '{default_provider}' not found in available managers."
-            )
-
-        self.active_ai_service_manager: IRealtimeAIServiceManager = (
-            self.all_ai_service_managers[default_provider]
-        )
-        logger.info(f"VoiceCog initialized with active AI service: {default_provider}")
+        self.active_ai_service_manager: Optional[IRealtimeAIServiceManager] = None
+        logger.info("VoiceCog initialized with AI service factories.")
 
         self.voice_connection = VoiceConnectionManager(
             bot=bot,
@@ -104,6 +89,72 @@ class VoiceCog(commands.Cog):
         logger.info(
             f"Cog unloaded. Cancelled {len(self._background_tasks)} background tasks."
         )
+
+    async def _create_and_set_manager(
+        self, provider_name: str, ctx: commands.Context
+    ) -> bool:
+        """
+        Creates and sets the AI service manager for the given provider using the factory.
+
+        Args:
+            provider_name: The name of the provider to create a manager for.
+            ctx: The command context, used for sending user-facing error messages.
+
+        Returns:
+            True if the manager was created and set successfully, False otherwise.
+        """
+        if provider_name not in self.ai_service_factories:
+            await ctx.send(f"Unknown AI provider '{provider_name}'.")
+            return False
+
+        manager_class, service_config = self.ai_service_factories[provider_name]
+        try:
+            # This is where the fail-fast constructor from Phase 1 is called
+            manager_instance = manager_class(
+                audio_manager=self.audio_manager, service_config=service_config
+            )
+            self.active_ai_service_manager = manager_instance
+            await self.bot_state_manager.set_active_ai_provider_name(provider_name)
+            logger.info(
+                f"Successfully created and set AI service manager for '{provider_name}'."
+            )
+            return True
+        except (ValueError, Exception) as e:
+            # Catches ValueError from config checks, and any other init errors
+            logger.error(
+                f"Failed to create AI service manager for '{provider_name}': {e}",
+                exc_info=True,
+            )
+            await ctx.send(
+                f"Failed to initialize AI provider '{provider_name.upper()}'. "
+                f"Please check your configuration (e.g., API key). Error: {e}"
+            )
+            self.active_ai_service_manager = None
+            return False
+
+    async def _shutdown_current_ai_provider(self) -> None:
+        """
+        Shuts down the connection to the current AI provider and discards the instance.
+        """
+        if self.active_ai_service_manager:
+            provider_name = self.bot_state_manager.active_ai_provider_name
+            logger.info(f"Shutting down current AI provider: {provider_name}")
+
+            if self.bot_state_manager.current_state == BotStateEnum.RECORDING:
+                if self.voice_connection.is_recording():
+                    self.voice_connection.stop_listening()
+                await self.bot_state_manager.stop_recording()
+                logger.info("Stopped recording due to AI provider shutdown.")
+
+            if self.active_ai_service_manager.is_connected():
+                await self.active_ai_service_manager.cancel_ongoing_response()
+                await self.active_ai_service_manager.disconnect()
+                logger.info(f"Disconnected from {provider_name}.")
+
+            self.active_ai_service_manager = None
+            logger.info(
+                f"AI provider instance for {provider_name} shut down and discarded."
+            )
 
     async def _check_and_handle_connection_issues(
         self,
@@ -133,13 +184,18 @@ class VoiceCog(commands.Cog):
                     "Connection check: Voice connection found to be inactive while in STANDBY or RECORDING state."
                 )
 
-        if not issue_detected and not self.active_ai_service_manager.is_connected():
-            if current_bot_state != BotStateEnum.CONNECTION_ERROR:
-                issue_detected = True
-                issue_description = "AI service connection lost."
-                logger.warning(
-                    "Connection check: AI service connection found to be inactive."
-                )
+        if not issue_detected and (
+            not self.active_ai_service_manager
+            or not self.active_ai_service_manager.is_connected()
+        ):
+            # Only flag an issue if a manager is supposed to be active and connected.
+            if self.active_ai_service_manager:
+                if current_bot_state != BotStateEnum.CONNECTION_ERROR:
+                    issue_detected = True
+                    issue_description = "AI service connection lost."
+                    logger.warning(
+                        "Connection check: AI service connection found to be inactive."
+                    )
 
         if issue_detected:
             logger.info(
@@ -172,6 +228,14 @@ class VoiceCog(commands.Cog):
             pcm_data: Processed (e.g., resampled) PCM audio data.
             channel: The Discord text channel for sending error messages.
         """
+        if not self.active_ai_service_manager:
+            logger.error("Cannot send audio: No active AI service manager.")
+            await channel.send(
+                "Sorry, the AI service is not available. Please try connecting again."
+            )
+            await self.bot_state_manager.enter_connection_error_state()
+            return
+
         if not await self.active_ai_service_manager.send_audio_chunk(pcm_data):
             logger.error("Failed to send audio chunk to AI service.")
             await channel.send(
@@ -203,6 +267,13 @@ class VoiceCog(commands.Cog):
             pcm_data: Raw PCM audio data from the voice connection.
             channel: The text channel for sending status or error messages.
         """
+        if not self.active_ai_service_manager:
+            logger.error("Cannot process audio: No active AI service manager.")
+            await channel.send(
+                "Sorry, the AI service is not available. Please try connecting again."
+            )
+            return
+
         logger.debug(f"Starting background audio processing for {len(pcm_data)} bytes.")
         try:
             target_frame_rate, target_channels = (
@@ -287,16 +358,20 @@ class VoiceCog(commands.Cog):
                 )
                 guild.voice_client.stop()
 
-            log_msg = (
-                f"Sending response.cancel for response_id: {response_id_to_cancel}."
-                if response_id_to_cancel
-                else "Sending response.cancel for default in-progress response."
-            )
-            logger.info(log_msg)
-
-            if not await self.active_ai_service_manager.cancel_ongoing_response():
-                logger.error(
-                    "Failed to send cancel_ongoing_response. Continuing with recording..."
+            if self.active_ai_service_manager:
+                log_msg = (
+                    f"Sending response.cancel for response_id: {response_id_to_cancel}."
+                    if response_id_to_cancel
+                    else "Sending response.cancel for default in-progress response."
+                )
+                logger.info(log_msg)
+                if not await self.active_ai_service_manager.cancel_ongoing_response():
+                    logger.error(
+                        "Failed to send cancel_ongoing_response. Continuing with recording..."
+                    )
+            else:
+                logger.warning(
+                    "Cannot cancel ongoing response, no active AI manager."
                 )
 
             if not await self.bot_state_manager.start_recording(user):
@@ -330,7 +405,7 @@ class VoiceCog(commands.Cog):
                     logger.info(
                         "Stopped listening due to cancellation. Attempting to cancel AI response."
                     )
-                    if not await self.active_ai_service_manager.cancel_ongoing_response():
+                    if self.active_ai_service_manager and not await self.active_ai_service_manager.cancel_ongoing_response():
                         logger.error(
                             "Failed to request cancellation of ongoing response during user cancellation."
                         )
@@ -408,9 +483,10 @@ class VoiceCog(commands.Cog):
         Command to connect the bot to a voice channel, establish AI service connection, and enter standby mode.
 
         This command orchestrates the entire connection sequence:
-        1. Connects to the configured AI service.
-        2. Connects to the user's voice channel.
-        3. Transitions the bot to STANDBY state and creates the control message.
+        1. Creates the default AI service manager instance if one isn't active.
+        2. Connects to the configured AI service.
+        3. Connects to the user's voice channel.
+        4. Transitions the bot to STANDBY state and creates the control message.
 
         Args:
             ctx: The command context containing information about the invocation
@@ -419,6 +495,16 @@ class VoiceCog(commands.Cog):
             await ctx.send("You are not connected to a voice channel.")
             return
 
+        # Create manager instance on first use
+        if not self.active_ai_service_manager:
+            default_provider = Config.AI_SERVICE_PROVIDER
+            logger.info(
+                f"No active AI manager. Creating default '{default_provider}' instance."
+            )
+            if not await self._create_and_set_manager(default_provider, ctx):
+                return  # Creation failed, user was notified.
+
+        # This check is now safe because the above block ensures the manager exists.
         if not self.active_ai_service_manager.is_connected():
             logger.info("Attempting to establish AI service connection...")
             if not await self.active_ai_service_manager.connect():
@@ -428,6 +514,8 @@ class VoiceCog(commands.Cog):
                 await ctx.send(
                     "Failed to connect to the AI service. Please try again later."
                 )
+                # Set to None so next connect attempt re-creates it.
+                self.active_ai_service_manager = None
                 return
         logger.info("AI service connection is active.")
 
@@ -463,14 +551,17 @@ class VoiceCog(commands.Cog):
             provider_name: The name of the AI provider to switch to.
         """
         provider_name = provider_name.lower()
-        if provider_name not in self.all_ai_service_managers:
-            valid_providers = ", ".join(self.all_ai_service_managers.keys())
+        if provider_name not in self.ai_service_factories:
+            valid_providers = ", ".join(self.ai_service_factories.keys())
             await ctx.send(
                 f"Invalid provider name '{provider_name}'. Valid options are: {valid_providers}."
             )
             return
 
-        if self.bot_state_manager.active_ai_provider_name == provider_name:
+        if (
+            self.bot_state_manager.active_ai_provider_name == provider_name
+            and self.active_ai_service_manager
+        ):
             await ctx.send(
                 f"AI provider is already set to '{provider_name.upper()}'. No change made."
             )
@@ -478,55 +569,33 @@ class VoiceCog(commands.Cog):
 
         logger.info(f"Attempting to switch AI provider to '{provider_name}'.")
 
+        # Shut down the old provider instance completely
         await self._shutdown_current_ai_provider()
 
-        self.active_ai_service_manager = self.all_ai_service_managers[provider_name]
-        await self.bot_state_manager.set_active_ai_provider_name(provider_name)
-        logger.info(f"Switched active AI service manager to {provider_name}.")
-
-        await self._connect_new_ai_provider_if_active(ctx, provider_name)
-
-    async def _shutdown_current_ai_provider(self) -> None:
-        """Shuts down the connection to the current AI provider if active."""
-        if self.active_ai_service_manager.is_connected():
-            logger.info(
-                f"Disconnecting current AI provider: {self.bot_state_manager.active_ai_provider_name}"
-            )
-            if self.bot_state_manager.current_state == BotStateEnum.RECORDING:
-                if self.voice_connection.is_recording():
-                    self.voice_connection.stop_listening()
-                await self.bot_state_manager.stop_recording()
-                logger.info("Stopped recording due to AI provider switch.")
-
-            await self.active_ai_service_manager.cancel_ongoing_response()
-            await self.active_ai_service_manager.disconnect()
-            logger.info(
-                f"Disconnected from {self.bot_state_manager.active_ai_provider_name}."
-            )
-
-    async def _connect_new_ai_provider_if_active(
-        self, ctx: commands.Context, provider_name: str
-    ) -> None:
-        """
-        Connects to the new AI provider if the bot is in a state that requires it.
-
-        Args:
-            ctx: The command context, used for sending messages on failure.
-            provider_name: The name of the new provider for logging purposes.
-        """
-        if self.bot_state_manager.current_state not in [
-            BotStateEnum.STANDBY,
-            BotStateEnum.RECORDING,
-            BotStateEnum.CONNECTION_ERROR,
-        ]:
+        # Create the new provider instance
+        if not await self._create_and_set_manager(provider_name, ctx):
+            # Creation failed. Error message was sent inside the helper.
+            # The bot is now without an active manager.
             return
 
+        await ctx.send(f"AI provider switched to '{provider_name.upper()}'.")
+
+        # If the bot is already in a voice channel, connect the new provider immediately.
         if self.voice_connection.is_connected():
-            logger.info(f"Attempting to connect new AI provider: {provider_name}")
-            if await self.active_ai_service_manager.connect():
+            logger.info(
+                f"Bot is active in a voice channel, connecting new AI provider '{provider_name}'."
+            )
+            if not await self.active_ai_service_manager.connect():
+                logger.error(f"Failed to connect to new AI provider: {provider_name}.")
+                await self.bot_state_manager.enter_connection_error_state()
+                await ctx.send(
+                    f"Connected to voice, but failed to connect to '{provider_name.upper()}'. Bot is in an error state."
+                )
+            else:
                 logger.info(
                     f"Successfully connected to new AI provider: {provider_name}."
                 )
+                # If we were in an error state, try to recover to standby.
                 if (
                     self.bot_state_manager.current_state
                     == BotStateEnum.CONNECTION_ERROR
@@ -535,20 +604,6 @@ class VoiceCog(commands.Cog):
                         logger.info(
                             "Recovered to STANDBY state after AI provider switch."
                         )
-                    else:
-                        logger.warning(
-                            "Could not recover to STANDBY after AI provider switch, standby message might be missing."
-                        )
-            else:
-                logger.error(f"Failed to connect to new AI provider: {provider_name}.")
-                await self.bot_state_manager.enter_connection_error_state()
-                await ctx.send(
-                    f"Failed to connect to '{provider_name.upper()}'. Bot is in an error state."
-                )
-        else:
-            logger.info(
-                "Bot is not in a voice channel, new AI provider will connect when bot joins a channel."
-            )
 
     @commands.command(name="disconnect")
     async def disconnect_command(self, ctx: commands.Context) -> None:
@@ -558,7 +613,7 @@ class VoiceCog(commands.Cog):
         This command orchestrates the entire disconnection sequence:
         1. Resets the bot to IDLE state.
         2. Disconnects from the voice channel.
-        3. Disconnects from the AI service.
+        3. Shuts down and discards the active AI service manager instance.
 
         Args:
             ctx: The command context containing information about the invocation
@@ -575,18 +630,13 @@ class VoiceCog(commands.Cog):
         else:
             logger.info("Disconnected from voice channel.")
 
-        if self.active_ai_service_manager.is_connected():
-            try:
-                logger.info("Stopping AI service connection...")
-                await self.active_ai_service_manager.disconnect()
-                logger.info("Disconnected from AI service.")
-            except (
-                openai.OpenAIError,
-                gemini_errors.APIError,
-            ) as e:
-                error_msg = f"An AI service error occurred during disconnect: {e}"
-                errors.append(error_msg)
-                logger.error(error_msg, exc_info=True)
+        # Shut down and discard the AI manager instance and its connection
+        await self._shutdown_current_ai_provider()
+
+        # This block is for completeness but shutdown should not raise these errors.
+        if self.active_ai_service_manager is not None:
+            errors.append("Failed to cleanly shut down the AI service manager.")
+            logger.error("AI service manager was not None after shutdown.")
 
         if errors:
             error_summary = "\n".join(errors)
@@ -619,8 +669,10 @@ class VoiceCog(commands.Cog):
             channel_for_message = self.bot_state_manager.standby_message.channel
 
         if self.bot_state_manager.current_state == BotStateEnum.CONNECTION_ERROR:
+            # Attempt recovery if a manager is active and connections are good.
             if (
                 self.voice_connection.is_connected()
+                and self.active_ai_service_manager
                 and self.active_ai_service_manager.is_connected()
             ):
                 logger.info(
@@ -655,6 +707,6 @@ async def setup(bot: commands.Bot) -> None:
         bot: The bot instance.
     """
     raise NotImplementedError(
-        "VoiceCog requires dependencies (audio_manager, bot_state_manager, ai_service_manager) and cannot be loaded as a standard extension. "
+        "VoiceCog requires dependencies (audio_manager, bot_state_manager, ai_service_factories) and cannot be loaded as a standard extension. "
         "Instantiate and add it manually in your main script."
     )

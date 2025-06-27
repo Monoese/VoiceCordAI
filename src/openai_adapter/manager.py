@@ -44,12 +44,17 @@ class OpenAIRealtimeManager(IRealtimeAIServiceManager):
         Args:
             audio_manager: An instance of AudioManager, required by the event handler.
             service_config: Configuration specific to this service instance.
+
+        Raises:
+            ValueError: If the API key is missing in the service configuration.
         """
         super().__init__(audio_manager, service_config)
 
-        self.openai_client: AsyncOpenAI = AsyncOpenAI(
-            api_key=self._service_config.get("api_key", Config.OPENAI_API_KEY)
-        )
+        api_key = self._service_config.get("api_key")
+        if not api_key:
+            raise ValueError("OpenAI API key is missing in the service configuration.")
+
+        self.openai_client: AsyncOpenAI = AsyncOpenAI(api_key=api_key)
 
         self.event_handler_adapter: OpenAIEventHandlerAdapter = (
             OpenAIEventHandlerAdapter(

@@ -4,7 +4,7 @@ Main entry point for the Discord bot application.
 This module initializes all the necessary components for the bot to function:
 - Audio management for voice processing
 - Bot state management for tracking the bot's current state
-- OpenAI Realtime API communication via OpenAIRealtimeManager
+- Real-time AI service communication via a factory pattern
 - Discord bot setup with appropriate intents and command prefix
 
 The bot is configured to use the VoiceCog for handling voice-related commands and events.
@@ -38,49 +38,24 @@ audio_manager: AudioManager = AudioManager()
 bot_state_manager: BotState = BotState()
 
 # --- Set up AI Service Communication Layer ---
-all_ai_service_managers: Dict[str, IRealtimeAIServiceManager] = {}
+# Instead of instances, we create a factory registry.
+ai_service_factories: Dict[str, tuple] = {
+    "openai": (OpenAIRealtimeManager, Config.OPENAI_SERVICE_CONFIG),
+    "gemini": (GeminiRealtimeManager, Config.GEMINI_SERVICE_CONFIG),
+}
+logger.info(
+    "AI service factories registered for: %s", list(ai_service_factories.keys())
+)
 
-if Config.OPENAI_API_KEY:
-    openai_manager = OpenAIRealtimeManager(
-        audio_manager=audio_manager, service_config=Config.OPENAI_SERVICE_CONFIG
-    )
-    all_ai_service_managers["openai"] = openai_manager
-    logger.info("OpenAI Realtime Manager initialized.")
-else:
-    logger.info(
-        "OpenAI API key not found. OpenAI Realtime Manager will not be available."
-    )
-
-if Config.GEMINI_API_KEY:
-    gemini_manager = GeminiRealtimeManager(
-        audio_manager=audio_manager, service_config=Config.GEMINI_SERVICE_CONFIG
-    )
-    all_ai_service_managers["gemini"] = gemini_manager
-    logger.info("Gemini Realtime Manager initialized.")
-else:
-    logger.info(
-        "Gemini API key not found. Gemini Realtime Manager will not be available."
-    )
-
-# Validate that at least one manager was initialized if we proceed
-if not all_ai_service_managers:
+# Validate that the default provider from Config is a valid factory choice.
+# The actual key validity will be checked on-demand when the manager is created.
+if Config.AI_SERVICE_PROVIDER not in ai_service_factories:
     logger.error(
-        "No AI service managers could be initialized. Check API key configurations. Exiting."
+        f"Default AI_SERVICE_PROVIDER '{Config.AI_SERVICE_PROVIDER}' is not a valid choice. "
+        f"Available providers: {list(ai_service_factories.keys())}. Exiting."
     )
     raise SystemExit(
-        "No AI service managers available. Please configure at least one API key."
-    )
-
-# Validate that the default provider from Config is in our dictionary and was initialized
-if Config.AI_SERVICE_PROVIDER not in all_ai_service_managers:
-    logger.error(
-        f"Default AI_SERVICE_PROVIDER '{Config.AI_SERVICE_PROVIDER}' is configured, "
-        f"but its API key is missing or the manager could not be initialized. "
-        f"Available managers: {list(all_ai_service_managers.keys())}. Exiting."
-    )
-    raise SystemExit(
-        f"Default AI_SERVICE_PROVIDER '{Config.AI_SERVICE_PROVIDER}' not available. "
-        f"Check API key or ensure it's a valid choice among initialized services."
+        f"Default AI_SERVICE_PROVIDER '{Config.AI_SERVICE_PROVIDER}' is not a valid choice."
     )
 
 
@@ -105,7 +80,7 @@ async def main():
             bot=bot,
             audio_manager=audio_manager,
             bot_state_manager=bot_state_manager,
-            ai_service_managers=all_ai_service_managers,  # Pass the dictionary of managers
+            ai_service_factories=ai_service_factories,  # Pass the dictionary of factories
         )
         await bot.add_cog(voice_cog_instance)
         logger.info("VoiceCog loaded and added to the bot.")
