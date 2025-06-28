@@ -11,7 +11,7 @@ from typing import Callable, Awaitable, Dict, Union, Optional, Tuple
 
 from google.genai import types
 
-from src.audio.audio import AudioManager
+from src.audio.playback import AudioPlaybackManager
 from src.utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -56,18 +56,18 @@ class GeminiEventHandlerAdapter:
 
     def __init__(
         self,
-        audio_manager: AudioManager,
+        audio_playback_manager: AudioPlaybackManager,
         response_audio_format: Tuple[int, int],
     ):
         """
         Initializes the GeminiEventHandlerAdapter.
 
         Args:
-            audio_manager: The AudioManager instance to use for audio processing.
+            audio_playback_manager: The AudioPlaybackManager instance to use for audio playback.
             response_audio_format: A tuple containing the (frame_rate, channels)
                                  for the audio responses from the AI service.
         """
-        self.audio_manager: AudioManager = audio_manager
+        self.audio_playback_manager: AudioPlaybackManager = audio_playback_manager
         self.response_audio_format: Tuple[int, int] = response_audio_format
         self._active_turn_id: Optional[str] = None
         self._stream_started_for_turn: bool = False
@@ -110,7 +110,7 @@ class GeminiEventHandlerAdapter:
         """
         Handles a message within a turn. If the message contains the first audio
         chunk for the current turn, it first initializes the audio stream in the
-        AudioManager before adding the chunk.
+        AudioPlaybackManager before adding the chunk.
         """
         message = event.message
         if message.server_content:
@@ -124,7 +124,7 @@ class GeminiEventHandlerAdapter:
                         logger.info(
                             f"GeminiEventHandler: First audio chunk received for turn '{self._active_turn_id}'. Starting new audio stream."
                         )
-                        await self.audio_manager.start_new_audio_stream(
+                        await self.audio_playback_manager.start_new_audio_stream(
                             self._active_turn_id, self.response_audio_format
                         )
                         self._stream_started_for_turn = True
@@ -136,10 +136,10 @@ class GeminiEventHandlerAdapter:
 
                 logger.debug(f"Received audio data chunk, size: {len(audio_data)} bytes.")
                 try:
-                    await self.audio_manager.add_audio_chunk(audio_data)
+                    await self.audio_playback_manager.add_audio_chunk(audio_data)
                 except Exception as e:
                     logger.error(
-                        f"Error adding audio chunk to AudioManager: {e}", exc_info=True
+                        f"Error adding audio chunk to AudioPlaybackManager: {e}", exc_info=True
                     )
 
             if text_data:
@@ -161,7 +161,7 @@ class GeminiEventHandlerAdapter:
             logger.info(f"GeminiEventHandler: Ending audio stream for turn: {event.turn_id}")
             # Only end the stream if it was actually started.
             if self._stream_started_for_turn:
-                await self.audio_manager.end_audio_stream()
+                await self.audio_playback_manager.end_audio_stream()
             self._active_turn_id = None
             self._stream_started_for_turn = False
         else:

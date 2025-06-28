@@ -16,7 +16,7 @@ from openai import AsyncOpenAI
 from openai.resources.beta.realtime.realtime import AsyncRealtimeConnection
 
 from src.utils.logger import get_logger
-from src.audio.audio import AudioManager
+from src.audio.playback import AudioPlaybackManager
 from .connection import OpenAIRealtimeConnection
 from .event_mapper import OpenAIEventHandlerAdapter
 from src.ai_services.interface import IRealtimeAIServiceManager
@@ -36,18 +36,18 @@ class OpenAIRealtimeManager(IRealtimeAIServiceManager):
     - Managing the connection lifecycle (connect, disconnect) as per the IRealtimeAIServiceManager interface.
     """
 
-    def __init__(self, audio_manager: AudioManager, service_config: Dict[str, Any]):
+    def __init__(self, audio_playback_manager: AudioPlaybackManager, service_config: Dict[str, Any]):
         """
         Initializes the OpenAIRealtimeManager.
 
         Args:
-            audio_manager: An instance of AudioManager, required by the event handler.
+            audio_playback_manager: An instance of AudioPlaybackManager, required by the event handler.
             service_config: Configuration specific to this service instance.
 
         Raises:
             ValueError: If the API key is missing in the service configuration.
         """
-        super().__init__(audio_manager, service_config)
+        super().__init__(audio_playback_manager, service_config)
 
         api_key = self._service_config.get("api_key")
         if not api_key:
@@ -63,7 +63,7 @@ class OpenAIRealtimeManager(IRealtimeAIServiceManager):
 
         self.event_handler_adapter: OpenAIEventHandlerAdapter = (
             OpenAIEventHandlerAdapter(
-                audio_manager=self._audio_manager,
+                audio_playback_manager=self._audio_playback_manager,
                 response_audio_format=self.response_audio_format,
             )
         )
@@ -203,7 +203,7 @@ class OpenAIRealtimeManager(IRealtimeAIServiceManager):
             logger.error("Cannot cancel response: Not connected.")
             return False
 
-        response_id_to_cancel = self._audio_manager.get_current_playing_response_id()
+        response_id_to_cancel = self._audio_playback_manager.get_current_playing_response_id()
 
         payload: Dict[str, Any] = {"type": "response.cancel"}
         if response_id_to_cancel:

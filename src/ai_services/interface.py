@@ -8,7 +8,7 @@ through a common set of methods.
 
 from abc import ABC, abstractmethod
 from typing import Any, Dict, Tuple
-from src.audio.audio import AudioManager
+from src.audio.playback import AudioPlaybackManager
 
 
 class IRealtimeAIServiceManager(ABC):
@@ -22,12 +22,12 @@ class IRealtimeAIServiceManager(ABC):
     It also defines properties for retrieving service-specific audio formats.
     """
 
-    def __init__(self, audio_manager: AudioManager, service_config: Dict[str, Any]) -> None:
+    def __init__(self, audio_playback_manager: AudioPlaybackManager, service_config: Dict[str, Any]) -> None:
         """
         Initializes the AI service manager.
 
         Args:
-            audio_manager: An instance of AudioManager for handling audio playback.
+            audio_playback_manager: An instance of AudioPlaybackManager for handling audio playback.
                            Concrete implementations will use this to play audio received
                            from the AI service.
             service_config: A dictionary containing service-specific configurations,
@@ -38,7 +38,7 @@ class IRealtimeAIServiceManager(ABC):
                             - `processing_audio_frame_rate` and `processing_audio_channels`
                             - `response_audio_frame_rate` and `response_audio_channels`
         """
-        self._audio_manager: AudioManager = audio_manager
+        self._audio_playback_manager: AudioPlaybackManager = audio_playback_manager
         self._service_config: Dict[str, Any] = service_config
 
         # --- Audio Format Configuration ---
@@ -176,11 +176,11 @@ class IRealtimeAIServiceManager(ABC):
     # Concrete implementations of this interface are responsible for:
     # 1. Receiving events/data from their respective AI services (e.g., audio chunks for playback,
     #    transcribed text, errors, stream lifecycle events).
-    # 2. Using the `self._audio_manager` instance (provided in __init__) to handle audio playback.
+    # 2. Using the `self._audio_playback_manager` instance (provided in __init__) to handle audio playback.
     #    This involves calling methods like:
-    #    - `self._audio_manager.start_new_audio_stream(stream_id, self.response_audio_format)`
-    #    - `self._audio_manager.add_audio_chunk(audio_chunk_bytes)`
-    #    - `self._audio_manager.end_audio_stream()`
+    #    - `self._audio_playback_manager.start_new_audio_stream(stream_id, self.response_audio_format)`
+    #    - `self._audio_playback_manager.add_audio_chunk(audio_chunk_bytes)`
+    #    - `self._audio_playback_manager.end_audio_stream()`
     #    The `stream_id` would be generated or obtained by the manager to uniquely identify
     #    an AI response audio stream being played.
     #

@@ -13,7 +13,7 @@ from google import genai
 from google.genai import types
 
 from src.ai_services.interface import IRealtimeAIServiceManager
-from src.audio.audio import AudioManager
+from src.audio.playback import AudioPlaybackManager
 from src.utils.logger import get_logger
 
 from .event_handler import GeminiEventHandlerAdapter
@@ -34,18 +34,18 @@ class GeminiRealtimeManager(IRealtimeAIServiceManager):
     - Managing the connection lifecycle (connect, disconnect) as per the IRealtimeAIServiceManager interface.
     """
 
-    def __init__(self, audio_manager: AudioManager, service_config: Dict[str, Any]):
+    def __init__(self, audio_playback_manager: AudioPlaybackManager, service_config: Dict[str, Any]):
         """
         Initializes the GeminiRealtimeManager.
 
         Args:
-            audio_manager: An instance of AudioManager, required by the event handler.
+            audio_playback_manager: An instance of AudioPlaybackManager, required by the event handler.
             service_config: Configuration specific to this service instance.
 
         Raises:
             ValueError: If the API key or model name is missing in the configuration.
         """
-        super().__init__(audio_manager, service_config)
+        super().__init__(audio_playback_manager, service_config)
 
         self.api_key: str = self._service_config.get("api_key")
         if not self.api_key:
@@ -67,7 +67,7 @@ class GeminiRealtimeManager(IRealtimeAIServiceManager):
 
         self.event_handler_adapter: GeminiEventHandlerAdapter = (
             GeminiEventHandlerAdapter(
-                self._audio_manager, self.response_audio_format
+                self._audio_playback_manager, self.response_audio_format
             )
         )
 
@@ -232,23 +232,23 @@ class GeminiRealtimeManager(IRealtimeAIServiceManager):
         # Get the current playing stream ID from AudioManager (if any)
         # This ID was generated client-side per turn for Gemini.
         current_playing_response_id = (
-            self._audio_manager.get_current_playing_response_id()
+            self._audio_playback_manager.get_current_playing_response_id()
         )
 
         if current_playing_response_id:
             logger.info(
-                f"GeminiRealtimeManager: Requesting AudioManager to end stream: {current_playing_response_id}"
+                f"GeminiRealtimeManager: Requesting AudioPlaybackManager to end stream: {current_playing_response_id}"
             )
             await (
-                self._audio_manager.end_audio_stream()
+                self._audio_playback_manager.end_audio_stream()
             )  # This stops playback and clears queue for the stream
             # Note: For Gemini, the _event_loop also calls end_audio_stream when a turn naturally ends.
             # Calling it here ensures immediate stop if user interrupts.
             # The _event_loop's subsequent call for the same stream_id should be harmless
-            # if AudioManager handles repeated calls to end_audio_stream gracefully.
+            # if AudioPlaybackManager handles repeated calls to end_audio_stream gracefully.
         else:
             logger.info(
-                "GeminiRealtimeManager: No active audio stream reported by AudioManager to cancel."
+                "GeminiRealtimeManager: No active audio stream reported by AudioPlaybackManager to cancel."
             )
 
         # Since there's no server-side cancellation signal to send for Gemini based on current docs,

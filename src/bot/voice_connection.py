@@ -14,7 +14,8 @@ from typing import Optional
 import discord
 from discord.ext import commands, voice_recv
 
-from src.audio.audio import AudioManager
+from src.audio.playback import AudioPlaybackManager
+from src.audio.recorder import create_sink
 from src.utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -34,17 +35,17 @@ class VoiceConnectionManager:
     def __init__(
         self,
         bot: commands.Bot,
-        audio_manager: AudioManager,
+        audio_playback_manager: AudioPlaybackManager,
     ) -> None:
         """
         Initialize the VoiceConnectionManager with required dependencies.
 
         Args:
             bot: The Discord bot instance.
-            audio_manager: Handles audio processing and playback.
+            audio_playback_manager: Handles audio playback.
         """
         self.bot = bot
-        self.audio_manager = audio_manager
+        self.audio_playback_manager = audio_playback_manager
         self.voice_client: Optional[voice_recv.VoiceRecvClient] = None
         self._playback_task: Optional[asyncio.Task] = None
 
@@ -74,7 +75,7 @@ class VoiceConnectionManager:
                 if self._playback_task is None or self._playback_task.done():
                     logger.info("Starting new playback loop task.")
                     self._playback_task = self.bot.loop.create_task(
-                        self.audio_manager.playback_loop(self.voice_client)
+                        self.audio_playback_manager.playback_loop(self.voice_client)
                     )
                 else:
                     logger.info("Playback loop task already running.")
@@ -138,7 +139,7 @@ class VoiceConnectionManager:
 
         try:
             if isinstance(self.voice_client, voice_recv.VoiceRecvClient):
-                sink = self.audio_manager.create_sink()
+                sink = create_sink()
                 self.voice_client.listen(sink)
                 logger.info("Started listening with new audio sink.")
                 return True

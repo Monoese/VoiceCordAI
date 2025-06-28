@@ -16,7 +16,7 @@ from typing import Dict
 import discord
 from discord.ext import commands
 
-from src.audio.audio import AudioManager
+from src.audio.playback import AudioPlaybackManager
 from src.bot.cogs.voice_cog import VoiceCog
 from src.config.config import Config
 from src.state.state import BotState
@@ -36,7 +36,7 @@ discord.utils.setup_logging(level=Config.LOG_CONSOLE_LEVEL, root=False)
 logger = get_logger(__name__)
 
 # --- Initialize Core Application Components ---
-audio_manager: AudioManager = AudioManager()
+audio_playback_manager: AudioPlaybackManager = AudioPlaybackManager()
 bot_state_manager: BotState = BotState()
 
 # --- Set up AI Service Communication Layer ---
@@ -80,7 +80,7 @@ async def main():
     async with bot:
         voice_cog_instance = VoiceCog(
             bot=bot,
-            audio_manager=audio_manager,
+            audio_playback_manager=audio_playback_manager,
             bot_state_manager=bot_state_manager,
             ai_service_factories=ai_service_factories,  # Pass the dictionary of factories
         )

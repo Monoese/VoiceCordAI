@@ -20,7 +20,8 @@ import openai
 from discord.ext import commands, tasks
 from google.genai import errors as gemini_errors
 
-from src.audio.audio import AudioManager
+from src.audio.playback import AudioPlaybackManager
+from src.audio.processor import process_recorded_audio
 from src.bot.voice_connection import VoiceConnectionManager
 from src.config.config import Config
 from src.state.state import BotState, BotStateEnum
@@ -48,7 +49,7 @@ class VoiceCog(commands.Cog):
     def __init__(
         self,
         bot: commands.Bot,
-        audio_manager: AudioManager,
+        audio_playback_manager: AudioPlaybackManager,
         bot_state_manager: BotState,
         ai_service_factories: Dict[str, tuple],
     ):
@@ -57,13 +58,13 @@ class VoiceCog(commands.Cog):
 
         Args:
             bot: The Discord bot instance this cog is attached to
-            audio_manager: Handles audio processing and playback
+            audio_playback_manager: Handles audio playback
             bot_state_manager: Manages the bot's state transitions
             ai_service_factories: A dictionary of factories for creating AI service managers,
                                  keyed by provider name (e.g., "openai", "gemini").
         """
         self.bot = bot
-        self.audio_manager = audio_manager
+        self.audio_playback_manager = audio_playback_manager
         self.bot_state_manager = bot_state_manager
         self.ai_service_factories = ai_service_factories
 
@@ -71,8 +72,7 @@ class VoiceCog(commands.Cog):
         logger.info("VoiceCog initialized with AI service factories.")
 
         self.voice_connection = VoiceConnectionManager(
-            bot=bot,
-            audio_manager=audio_manager,
+            bot=bot, audio_playback_manager=self.audio_playback_manager
         )
         self._background_tasks = set()
         self._connection_check_loop.start()
@@ -111,7 +111,8 @@ class VoiceCog(commands.Cog):
         try:
             # This is where the fail-fast constructor from Phase 1 is called
             manager_instance = manager_class(
-                audio_manager=self.audio_manager, service_config=service_config
+                audio_playback_manager=self.audio_playback_manager,
+                service_config=service_config,
             )
             self.active_ai_service_manager = manager_instance
             await self.bot_state_manager.set_active_ai_provider_name(provider_name)
@@ -283,7 +284,7 @@ class VoiceCog(commands.Cog):
                 f"Processing audio for '{self.bot_state_manager.active_ai_provider_name}' at {target_frame_rate}Hz, {target_channels} channel(s)."
             )
 
-            processed_pcm_data = await self.audio_manager.process_recorded_audio(
+            processed_pcm_data = await process_recorded_audio(
                 pcm_data,
                 target_frame_rate=target_frame_rate,
                 target_channels=target_channels,
@@ -354,7 +355,7 @@ class VoiceCog(commands.Cog):
                     "User initiated new recording. Stopping current audio playback."
                 )
                 response_id_to_cancel = (
-                    self.audio_manager.get_current_playing_response_id()
+                    self.audio_playback_manager.get_current_playing_response_id()
                 )
                 guild.voice_client.stop()
 
@@ -707,6 +708,6 @@ async def setup(bot: commands.Bot) -> None:
         bot: The bot instance.
     """
     raise NotImplementedError(
-        "VoiceCog requires dependencies (audio_manager, bot_state_manager, ai_service_factories) and cannot be loaded as a standard extension. "
+        "VoiceCog requires dependencies (audio_playback_manager, bot_state_manager, ai_service_factories) and cannot be loaded as a standard extension. "
         "Instantiate and add it manually in your main script."
     )

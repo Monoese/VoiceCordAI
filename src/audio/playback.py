@@ -1,14 +1,11 @@
 import asyncio
-import base64
-import io
 import os
 from dataclasses import dataclass, field
 from enum import Enum, auto
-from typing import Any, Optional, ByteString, Tuple, Callable
+from typing import Any, Optional, Tuple, Callable
 
-from discord import FFmpegPCMAudio, User
+from discord import FFmpegPCMAudio
 from discord.ext import voice_recv
-from pydub import AudioSegment
 
 from src.config.config import Config
 from src.utils.logger import get_logger
@@ -36,21 +33,19 @@ class _PlaybackStream:
     feeder_task: Optional[asyncio.Task] = field(default=None, repr=False)
 
 
-class AudioManager:
+class AudioPlaybackManager:
     """
-    Manages audio processing, recording, and streaming playback for the Discord bot.
+    Manages streaming audio playback for the Discord bot.
 
     This class handles:
-    - Creating audio sinks for recording from Discord voice channels
-    - Processing raw PCM audio data (resampling, format conversion)
-    - Encoding audio to base64 for transmission to external services
     - Managing streaming audio playback in Discord voice channels
     - Queuing audio chunks for real-time playback
+    - A state machine for handling playback lifecycle (playing, stopping, idle)
     """
 
     def __init__(self) -> None:
         """
-        Initialize the AudioManager for streaming playback.
+        Initialize the AudioPlaybackManager for streaming playback.
 
         Sets up:
         - audio_chunk_queue: Queue for audio chunks to be streamed for playback
@@ -63,7 +58,7 @@ class AudioManager:
         self._playback_control_event = (
             asyncio.Event()
         )  # Signals playback_loop to check for new work
-        # _current_stream_id stores the ID of the stream that the AudioManager is currently
+        # _current_stream_id stores the ID of the stream that the AudioPlaybackManager is currently
         # *expecting* to receive chunks for or has been told to start.
         # This is set by start_new_audio_stream().
         self._current_stream_id: Optional[str] = None
@@ -72,152 +67,19 @@ class AudioManager:
         self._eos_queued_for_streams: set[str] = (
             set()
         )  # Tracks streams for which EOS has been queued
-        logger.debug("AudioManager initialized for streaming playback.")
+        logger.debug("AudioPlaybackManager initialized for streaming playback.")
 
-    class PCM16Sink(voice_recv.AudioSink):
-        """
-        Custom audio sink that captures PCM audio data from Discord voice channels.
-
-        This sink:
-        - Captures raw PCM audio data from users in voice channels
-        - Accumulates the data in a bytearray for later processing
-        - Tracks the total amount of data captured for debugging
-        """
-
-        def __init__(self) -> None:
-            """Initialize the audio sink with empty buffer and counters."""
-            super().__init__()
-            self.audio_data: bytearray = bytearray()
-            self.total_bytes: int = 0
-            logger.debug("New audio sink initialized")
-
-        def wants_opus(self) -> bool:
-            """
-            Indicate whether this sink wants Opus-encoded audio.
-
-            Returns:
-                bool: False to receive PCM audio data instead of Opus-encoded data
-            """
-            return False
-
-        def write(self, _user: User, data: Any) -> None:
-            """
-            Process incoming audio data from a user.
-
-            This method is called by discord.py for each audio packet received.
-            It accumulates PCM audio data in the audio_data buffer.
-
-            Args:
-                _user: The Discord user who sent the audio
-                data: The audio data packet containing PCM data (discord.VoiceReceivePacket)
-            """
-            # data.pcm might be None or empty if silence is received from Discord
-            # or during specific discord.py internal states.
-            if data.pcm:
-                self.audio_data.extend(data.pcm)
-                self.total_bytes += len(data.pcm)
-                logger.debug(
-                    f"PCM16Sink.write: Adding {len(data.pcm)} bytes. Total accumulated: {self.total_bytes} bytes"
-                )
-            else:
-                logger.warning("Write called with no PCM data")
-
-        def cleanup(self) -> None:
-            """
-            Clean up resources when the sink is no longer needed.
-
-            This method is called by discord.py when the bot stops listening.
-            It logs the final state and clears the audio buffer.
-            """
-            logger.debug(f"Cleanup called. Final total bytes: {self.total_bytes}")
-            data_len = len(self.audio_data)
-            logger.debug(f"Length of audio_data before clear: {data_len}")
-            self.audio_data.clear()
-
-    def create_sink(self) -> PCM16Sink:
-        """
-        Create a new audio sink instance for capturing voice data.
-
-        This method instantiates a fresh PCM16Sink that can be attached to a
-        Discord voice client to capture audio from users in a voice channel.
-
-        Returns:
-            PCM16Sink: A new audio sink instance ready to capture audio
-        """
-        return self.PCM16Sink()
-
-    @staticmethod
-    async def process_recorded_audio(
-        raw_audio_data: bytes, target_frame_rate: int, target_channels: int
-    ) -> bytes:
-        """
-        Converts raw PCM audio from Discord's format into the format required by
-        AI services, using efficient in-memory processing.
-
-        This method uses `pydub` for all transcoding (resampling and channel mixing),
-        which happens within the Python process, reducing latency and CPU overhead.
-
-        Args:
-            raw_audio_data: The raw S16LE PCM audio bytes from the Discord sink.
-            target_frame_rate: The target sample rate (e.g., 16000 for Gemini, 24000 for OpenAI).
-            target_channels: The target number of audio channels (e.g., 1 for mono).
-
-        Returns:
-            bytes: The processed S16LE PCM audio bytes ready for the AI service.
-
-        Raises:
-            RuntimeError: If the audio processing fails at any stage.
-        """
-        # 1. Load the raw PCM data into a pydub AudioSegment.
-        #    We must explicitly define the format of the incoming raw data using
-        #    the application's configuration settings.
-        try:
-            audio_segment = AudioSegment(
-                data=raw_audio_data,
-                sample_width=Config.SAMPLE_WIDTH,
-                frame_rate=Config.DISCORD_AUDIO_FRAME_RATE,
-                channels=Config.DISCORD_AUDIO_CHANNELS,
-            )
-        except Exception as e:
-            logger.error(f"Failed to load raw audio into pydub AudioSegment: {e}")
-            raise RuntimeError("Audio processing failed during data loading.") from e
-
-        processed_segment = audio_segment.set_channels(target_channels)
-
-        processed_segment = processed_segment.set_frame_rate(target_frame_rate)
-
-        buffer = io.BytesIO()
-        processed_segment.export(buffer, format="raw")  # "raw" corresponds to pcm_s16le
-
-        processed_bytes = buffer.getvalue()
-        logger.debug(
-            f"Audio processed via pydub: {len(raw_audio_data)} bytes -> {len(processed_bytes)} bytes"
-        )
-        return processed_bytes
-
-    @staticmethod
-    def encode_to_base64(pcm_data: ByteString) -> str:
-        """
-        Encode PCM audio data to a base64 string for transmission.
-
-        This is used to prepare audio data for sending over WebSocket connections
-        where binary data needs to be represented as text.
-
-        Args:
-            pcm_data: The PCM audio data to encode
-
-        Returns:
-            str: Base64-encoded string representation of the audio data
-        """
-        return base64.b64encode(pcm_data).decode("utf-8")
 
     def get_current_playing_response_id(self) -> Optional[str]:
         """
-        Returns the response_id part of the current target/playing stream ID.
-        Assumes _current_stream_id is in the format "response_id-item_id".
+        Returns the base identifier of the current target/playing stream ID.
+
+        For stream IDs with a composite format (e.g., "response_id-item_id"),
+        this returns the part before the first hyphen. For simple IDs, it returns
+        the entire ID.
 
         Returns:
-            Optional[str]: The response_id of the current stream, or None if no
+            Optional[str]: The base identifier of the current stream, or None if no
                            stream is active.
         """
         if self._current_stream_id:
@@ -241,14 +103,14 @@ class AudioManager:
         """
         if self._current_stream_id is not None and self._current_stream_id != stream_id:
             logger.warning(
-                f"AudioManager: Request to start new stream '{stream_id}' while '{self._current_stream_id}' is active. "
+                f"AudioPlaybackManager: Request to start new stream '{stream_id}' while '{self._current_stream_id}' is active. "
                 "The playback loop will handle the transition."
             )
 
         self._current_stream_id = stream_id
         self._current_response_format = response_format
         logger.info(
-            f"AudioManager: New target audio stream set to '{self._current_stream_id}' with format {response_format}"
+            f"AudioPlaybackManager: New target audio stream set to '{self._current_stream_id}' with format {response_format}"
         )
         self._playback_control_event.set()
 
@@ -262,12 +124,12 @@ class AudioManager:
         current_target_stream_id = self._current_stream_id
         if current_target_stream_id is None:
             logger.warning(
-                "AudioManager: No active target stream (_current_stream_id is None) to add audio chunk. Ignoring."
+                "AudioPlaybackManager: No active target stream (_current_stream_id is None) to add audio chunk. Ignoring."
             )
             return
         await self.audio_chunk_queue.put((current_target_stream_id, audio_chunk))
         logger.debug(
-            f"AudioManager: Added chunk of {len(audio_chunk)} bytes to queue for stream {current_target_stream_id}"
+            f"AudioPlaybackManager: Added chunk of {len(audio_chunk)} bytes to queue for stream {current_target_stream_id}"
         )
 
     async def end_audio_stream(self, stream_id_override: Optional[str] = None) -> None:
@@ -289,19 +151,19 @@ class AudioManager:
 
         if target_stream_id is None:
             logger.info(
-                f"AudioManager.end_audio_stream: No target stream to end (target_stream_id is None). "
+                f"AudioPlaybackManager.end_audio_stream: No target stream to end (target_stream_id is None). "
                 f"Provided override: {stream_id_override}, _current_stream_id: {self._current_stream_id}"
             )
             return
 
         if target_stream_id in self._eos_queued_for_streams:
             logger.info(
-                f"AudioManager.end_audio_stream: EOS already signaled for stream '{target_stream_id}'. Ignoring duplicate request."
+                f"AudioPlaybackManager.end_audio_stream: EOS already signaled for stream '{target_stream_id}'. Ignoring duplicate request."
             )
             return
 
         logger.info(
-            f"AudioManager: Signaling end of audio stream '{target_stream_id}' by queueing EOS."
+            f"AudioPlaybackManager: Signaling end of audio stream '{target_stream_id}' by queueing EOS."
         )
         await self.audio_chunk_queue.put(
             (target_stream_id, None)
@@ -503,13 +365,13 @@ class AudioManager:
         # incorrectly nullifies it.
         if self._current_stream_id == stream_id:
             logger.info(
-                f"AudioManager: Cleared _current_stream_id '{self._current_stream_id}' as its playback and cleanup finished."
+                f"AudioPlaybackManager: Cleared _current_stream_id '{self._current_stream_id}' as its playback and cleanup finished."
             )
             self._current_stream_id = None
             self._current_response_format = None
         else:
             logger.info(
-                f"AudioManager: Stream '{stream_id}' cleanup finished, but _current_stream_id is now '{self._current_stream_id}'. Not clearing _current_stream_id."
+                f"AudioPlaybackManager: Stream '{stream_id}' cleanup finished, but _current_stream_id is now '{self._current_stream_id}'. Not clearing _current_stream_id."
             )
 
         # Remove from the set tracking EOS-queued streams as this stream is now fully processed.

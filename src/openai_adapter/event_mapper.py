@@ -17,7 +17,7 @@ from openai.types.beta.realtime import Session
 from openai.types.beta.realtime.error_event import Error  # Error type for error details
 from typing import Any as RealtimeEvent  # Using Any as a fallback
 
-from src.audio.audio import AudioManager
+from src.audio.playback import AudioPlaybackManager
 from src.utils.logger import get_logger
 
 
@@ -34,18 +34,18 @@ class OpenAIEventHandlerAdapter:
 
     def __init__(
         self,
-        audio_manager: AudioManager,
+        audio_playback_manager: AudioPlaybackManager,
         response_audio_format: Tuple[int, int],
     ):
         """
         Initializes the OpenAIEventHandlerAdapter.
 
         Args:
-            audio_manager: The AudioManager instance to use for audio processing.
+            audio_playback_manager: The AudioPlaybackManager instance to use for audio playback.
             response_audio_format: A tuple containing the (frame_rate, channels)
                                  for the audio responses from the AI service.
         """
-        self.audio_manager: AudioManager = audio_manager
+        self.audio_playback_manager: AudioPlaybackManager = audio_playback_manager
         self.response_audio_format: Tuple[int, int] = response_audio_format
         self._active_response_stream_id: Optional[str] = None
 
@@ -166,13 +166,13 @@ class OpenAIEventHandlerAdapter:
             logger.info(
                 f"OpenAIEventHandlerAdapter: Starting new audio stream '{self._active_response_stream_id}' for {event.type}."
             )
-            await self.audio_manager.start_new_audio_stream(
+            await self.audio_playback_manager.start_new_audio_stream(
                 self._active_response_stream_id, self.response_audio_format
             )
 
         try:
             decoded_audio = base64.b64decode(base64_audio_chunk)
-            await self.audio_manager.add_audio_chunk(decoded_audio)
+            await self.audio_playback_manager.add_audio_chunk(decoded_audio)
         except Exception as e:
             logger.error(
                 f"Error decoding or adding audio chunk for stream '{self._active_response_stream_id}': {e}",
@@ -201,7 +201,7 @@ class OpenAIEventHandlerAdapter:
         )
 
         if self._active_response_stream_id == event_stream_id:
-            await self.audio_manager.end_audio_stream()
+            await self.audio_playback_manager.end_audio_stream()
             self._active_response_stream_id = None
         else:
             logger.warning(
