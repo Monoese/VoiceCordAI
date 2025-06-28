@@ -15,7 +15,6 @@ from typing import Optional, Dict, Any
 from openai import AsyncOpenAI
 from openai.resources.beta.realtime.realtime import AsyncRealtimeConnection
 
-from src.config.config import Config
 from src.utils.logger import get_logger
 from src.audio.audio import AudioManager
 from .connection import OpenAIRealtimeConnection
@@ -54,6 +53,12 @@ class OpenAIRealtimeManager(IRealtimeAIServiceManager):
         if not api_key:
             raise ValueError("OpenAI API key is missing in the service configuration.")
 
+        self.model_name: str = self._service_config.get("model_name")
+        if not self.model_name:
+            raise ValueError(
+                "OpenAI model name is missing in the service configuration."
+            )
+
         self.openai_client: AsyncOpenAI = AsyncOpenAI(api_key=api_key)
 
         self.event_handler_adapter: OpenAIEventHandlerAdapter = (
@@ -63,7 +68,7 @@ class OpenAIRealtimeManager(IRealtimeAIServiceManager):
             )
         )
         self.connection_handler: OpenAIRealtimeConnection = OpenAIRealtimeConnection(
-            client=self.openai_client
+            client=self.openai_client, model_name=self.model_name
         )
 
     async def _get_active_conn(self) -> Optional[AsyncRealtimeConnection]:

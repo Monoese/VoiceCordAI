@@ -14,7 +14,6 @@ from google.genai import types
 
 from src.ai_services.interface import IRealtimeAIServiceManager
 from src.audio.audio import AudioManager
-from src.config.config import Config
 from src.utils.logger import get_logger
 
 from .event_handler import GeminiEventHandlerAdapter

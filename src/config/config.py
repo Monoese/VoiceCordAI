@@ -48,6 +48,7 @@ class Config:
     CONNECTION_TIMEOUT: int = (
         15 * 60
     )  # Timeout for voice channel connections in seconds
+    AI_SERVICE_CONNECTION_TIMEOUT: float = 30.0  # Timeout for AI service connections
     CHUNK_DURATION_MS: int = 500  # Duration of audio chunks in milliseconds
 
     # --- Audio Processing Settings ---
@@ -69,63 +70,9 @@ class Config:
     )  # Max size of a log file before rotation (in bytes)
     LOG_BACKUP_COUNT: int = 3  # Number of backup log files to keep
 
-    # --- OpenAI Service Configuration ---
+    # --- API Keys ---
     OPENAI_API_KEY: Optional[str] = os.getenv("OPENAI_API_KEY")
-    # Name of the OpenAI model for real-time services.
-    OPENAI_REALTIME_MODEL_NAME: str = os.getenv(
-        "OPENAI_REALTIME_MODEL_NAME", "gpt-4o-mini-realtime-preview"
-    )
-    # WebSocket URL for OpenAI real-time services (note: includes specific model and date)
-    WS_SERVER_URL: str = (
-        "wss://api.openai.com/v1/realtime?model=gpt-4o-mini-realtime-preview-2024-12-17"
-    )
-    OPENAI_SERVICE_INITIAL_SESSION_DATA: Dict[str, Any] = {
-        "turn_detection": None
-    }  # Example initial config for OpenAI
-    OPENAI_SERVICE_CONNECTION_TIMEOUT: float = 30.0  # Example timeout for connection
-    # OPENAI_SERVICE_RESPONSE_CREATION_DATA: Dict[str, Any] = {"modalities": ["text", "audio"]} # Example for response creation
-    # OpenAI Service Configuration Dictionary
-    # This is defined here, within the class, using other class attributes defined above.
-    OPENAI_SERVICE_CONFIG: Dict[str, Any] = {
-        "api_key": OPENAI_API_KEY,
-        "initial_session_data": OPENAI_SERVICE_INITIAL_SESSION_DATA,
-        "connection_timeout": OPENAI_SERVICE_CONNECTION_TIMEOUT,
-        # "response_creation_data": OPENAI_SERVICE_RESPONSE_CREATION_DATA # Uncomment if using the above
-        "processing_audio_frame_rate": 24000,
-        "processing_audio_channels": 1,
-        "response_audio_frame_rate": 24000,
-        "response_audio_channels": 1,
-    }
-
-    # --- Gemini Service Configuration ---
     GEMINI_API_KEY: Optional[str] = os.getenv("GEMINI_API_KEY")
-    GEMINI_REALTIME_MODEL_NAME: str = os.getenv(
-        "GEMINI_REALTIME_MODEL_NAME",
-        "models/gemini-2.5-flash-preview-native-audio-dialog",  # Default from example
-    )
-    # Default LiveConnectConfig parameters, can be overridden by environment or specific needs
-    GEMINI_DEFAULT_LIVE_CONNECT_CONFIG: Dict[str, Any] = {
-        "response_modalities": ["AUDIO"],  # Expect audio responses
-        "media_resolution": "MEDIA_RESOLUTION_MEDIUM",  # Default from example
-        "speech_config": {  # Default from example
-            "voice_config": {"prebuilt_voice_config": {"voice_name": "Zephyr"}}
-        },
-        "context_window_compression": {  # Default from example
-            "trigger_tokens": 25600,
-            "sliding_window": {"target_tokens": 12800},
-        },
-    }
-    # GEMINI_SERVICE_CONFIG can be customized further if needed, e.g., via JSON string in env var
-    GEMINI_SERVICE_CONFIG: Dict[str, Any] = {
-        "api_key": GEMINI_API_KEY,
-        "model_name": GEMINI_REALTIME_MODEL_NAME,
-        "live_connect_config": GEMINI_DEFAULT_LIVE_CONNECT_CONFIG,
-        "connection_timeout": 30.0,  # Example connection timeout for Gemini
-        "processing_audio_frame_rate": 16000,  # As per Gemini docs
-        "processing_audio_channels": 1,
-        "response_audio_frame_rate": 24000,  # As per Gemini docs
-        "response_audio_channels": 1,
-    }
 
     @classmethod
     def validate(cls) -> None:

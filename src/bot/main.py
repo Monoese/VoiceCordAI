@@ -22,9 +22,11 @@ from src.config.config import Config
 from src.state.state import BotState
 from src.utils.logger import get_logger
 
-# Import both managers
+# Import managers and their configurations
 from src.openai_adapter.manager import OpenAIRealtimeManager
+from src.openai_adapter.config import OPENAI_SERVICE_CONFIG
 from src.gemini_adapter.manager import GeminiRealtimeManager
+from src.gemini_adapter.config import GEMINI_SERVICE_CONFIG
 from src.ai_services.interface import IRealtimeAIServiceManager
 
 
@@ -40,8 +42,8 @@ bot_state_manager: BotState = BotState()
 # --- Set up AI Service Communication Layer ---
 # Instead of instances, we create a factory registry.
 ai_service_factories: Dict[str, tuple] = {
-    "openai": (OpenAIRealtimeManager, Config.OPENAI_SERVICE_CONFIG),
-    "gemini": (GeminiRealtimeManager, Config.GEMINI_SERVICE_CONFIG),
+    "openai": (OpenAIRealtimeManager, OPENAI_SERVICE_CONFIG),
+    "gemini": (GeminiRealtimeManager, GEMINI_SERVICE_CONFIG),
 }
 logger.info(
     "AI service factories registered for: %s", list(ai_service_factories.keys())

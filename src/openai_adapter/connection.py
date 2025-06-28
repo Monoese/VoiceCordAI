@@ -18,7 +18,6 @@ from openai.resources.beta.realtime.realtime import (
 # from openai.types.beta.realtime import RealtimeEvent # IDE has trouble finding this
 from typing import Any as RealtimeEvent  # Using Any as a fallback
 
-from src.config.config import Config
 from src.utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -33,15 +32,16 @@ class OpenAIRealtimeConnection:
     mechanism to automatically reconnect after transient network failures.
     """
 
-    def __init__(self, client: AsyncOpenAI):
+    def __init__(self, client: AsyncOpenAI, model_name: str):
         """
         Initializes the OpenAIRealtimeConnection.
 
         Args:
             client: An instance of AsyncOpenAI client.
+            model_name: The name of the OpenAI model to use for the connection.
         """
         self.client: AsyncOpenAI = client
-        self.model_name: str = Config.OPENAI_REALTIME_MODEL_NAME
+        self.model_name: str = model_name
 
         self._connection_object: Optional[OpenAIConnectionObject] = None
         self._event_loop_task: Optional[asyncio.Task] = None
