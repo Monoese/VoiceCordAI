@@ -6,7 +6,8 @@ This module provides the VoiceCog class which handles all voice-related commands
 - Recording user audio
 - Processing audio through real-time AI services
 - Playing back audio responses
-- Managing the bot's state during voice interactions
+- Orchestrating bot state transitions during voice interactions
+- Managing the voice session UI (control message)
 
 The cog uses reaction-based controls to start and stop recording, making it user-friendly
 in Discord servers.
@@ -41,7 +42,8 @@ class VoiceCog(commands.Cog):
     - Audio recording from users
     - Sending recorded audio to the AI service
     - Playing back audio responses
-    - State transitions between idle, standby, and recording states
+    - Triggering state transitions (e.g., standby, recording)
+    - Managing the UI for the voice session control message
 
     The cog uses reaction-based controls (🎙️, ❌) for user interaction.
     """
@@ -69,6 +71,9 @@ class VoiceCog(commands.Cog):
         self.ai_service_factories = ai_service_factories
 
         self.active_ai_service_manager: Optional[IRealtimeAIServiceManager] = None
+        self._standby_message: Optional[discord.Message] = None
+        self._update_queue = asyncio.Queue()
+        self._ui_updater_task: Optional[asyncio.Task] = None
         logger.info("VoiceCog initialized with AI service factories.")
 
         self.voice_connection = VoiceConnectionManager(
@@ -89,6 +94,122 @@ class VoiceCog(commands.Cog):
         logger.info(
             f"Cog unloaded. Cancelled {len(self._background_tasks)} background tasks."
         )
+
+    def _get_standby_message_content(self) -> str:
+        """
+        Generate the standby message content based on the current state.
+        """
+        current_state = self.bot_state_manager.current_state
+        main_content: str
+        authority_user_note: str = "can control the recording actions."
+        authority_user_name = self.bot_state_manager.get_authority_user_name()
+
+        if current_state == BotStateEnum.CONNECTION_ERROR:
+            main_content = (
+                f"**⚠️ Voice Chat Session - CONNECTION ERROR **\n\n"
+                f"---\n"
+                f"### 🛠 Current State:\n"
+                f"- **State**: `{current_state.value}`\n"
+                f"- **Details**: The bot has encountered a connection issue (voice or services) and may not be fully functional.\n"
+                f"- **Action**: Please try `{Config.COMMAND_PREFIX}disconnect` and then `{Config.COMMAND_PREFIX}connect` again.\n"
+                f"If the issue persists, contact an administrator."
+            )
+            authority_user_note = "can control the recording actions (if applicable)."
+        else:
+            main_content = (
+                f"**🎙 Voice Chat Session - **\n\n"
+                f"---\n"
+                f"### 🔄 How to control the bot:\n"
+                f"1. **Start Recording**: React to this message with 🎙 to start recording.\n"
+                f"2. **Finish Recording**: Remove your 🎙 reaction to finish recording.\n"
+                f"3. **End Session**: Use `{Config.COMMAND_PREFIX}disconnect` to end the session.\n"
+                f"4. **Switch AI**: Use `{Config.COMMAND_PREFIX}set <name>` (e.g., openai, gemini).\n"
+                f"---\n"
+                f"### 🛠 Current State:\n"
+                f"- **State**: `{current_state.value}`"
+            )
+
+        shared_content = (
+            f"---\n"
+            f"### 🤖 AI Provider:\n"
+            f"> Active Service: `{self.bot_state_manager.active_ai_provider_name.upper()}`\n"
+            f"---\n"
+            f"### 🧑 Authority User:\n"
+            f"> `{authority_user_name}` {authority_user_note}"
+        )
+
+        return f"{main_content}\n{shared_content}"
+
+    async def _update_standby_message(self) -> None:
+        """
+        Update the standby message with the current state.
+        """
+        if self._standby_message:
+            try:
+                await self._standby_message.edit(
+                    content=self._get_standby_message_content()
+                )
+            except discord.DiscordException as e:
+                logger.error("Failed to update standby message: %s", e, exc_info=True)
+                # Re-raise to allow the updater loop to handle it.
+                raise
+
+    def _queue_ui_update(self) -> None:
+        """Schedules a UI update by putting an item in the queue."""
+        self._update_queue.put_nowait(True)
+
+    async def _ui_updater_loop(self) -> None:
+        """
+        Background loop to process UI update requests from a queue.
+        This method continuously waits for items on `_update_queue`. When an item
+        is received, it calls `_update_standby_message` to synchronize the UI.
+        This decouples state changes from slow network I/O.
+        """
+        while True:
+            try:
+                await self._update_queue.get()
+            except asyncio.CancelledError:
+                logger.info("UI updater task cancelled while waiting for queue.")
+                break
+
+            try:
+                await self._update_standby_message()
+            except discord.DiscordException as e:
+                # The message might have been deleted, or we might have lost permissions.
+                # This is not a critical error for the bot's state, just a UI sync failure.
+                logger.warning(
+                    f"Failed to update standby message in background loop: {e}"
+                )
+            except Exception as e:
+                logger.error(
+                    "Unexpected error during UI update in background loop: %s",
+                    e,
+                    exc_info=True,
+                )
+            finally:
+                self._update_queue.task_done()
+
+    def start_updater_task(self) -> None:
+        """
+        Start the background UI updater task if it is not already running.
+        """
+        if self._ui_updater_task is None or self._ui_updater_task.done():
+            self._ui_updater_task = asyncio.create_task(self._ui_updater_loop())
+            logger.info("UI updater task started.")
+
+    async def stop_updater_task(self) -> None:
+        """
+        Stop the background UI updater task gracefully.
+        """
+        if self._ui_updater_task and not self._ui_updater_task.done():
+            self._ui_updater_task.cancel()
+            try:
+                await self._ui_updater_task
+            except asyncio.CancelledError:
+                pass  # This is expected.
+            finally:
+                self._ui_updater_task = None
+                logger.info("UI updater task stopped.")
 
     async def _create_and_set_manager(
         self, provider_name: str, ctx: commands.Context
@@ -203,6 +324,8 @@ class VoiceCog(commands.Cog):
                 f"Connection issue detected: {issue_description}. Transitioning to CONNECTION_ERROR state."
             )
             state_changed = await self.bot_state_manager.enter_connection_error_state()
+            if state_changed:
+                self._queue_ui_update()
             if state_changed and ctx_or_channel:
                 try:
                     target_channel = (
@@ -332,8 +455,7 @@ class VoiceCog(commands.Cog):
             return
 
         if not (
-            self.bot_state_manager.standby_message
-            and reaction.message.id == self.bot_state_manager.standby_message.id
+            self._standby_message and reaction.message.id == self._standby_message.id
         ):
             return
 
@@ -371,15 +493,15 @@ class VoiceCog(commands.Cog):
                         "Failed to send cancel_ongoing_response. Continuing with recording..."
                     )
             else:
-                logger.warning(
-                    "Cannot cancel ongoing response, no active AI manager."
-                )
+                logger.warning("Cannot cancel ongoing response, no active AI manager.")
 
             if not await self.bot_state_manager.start_recording(user):
                 logger.warning(
                     f"State transition to RECORDING failed for user {user.name}."
                 )
                 return
+
+            self._queue_ui_update()
 
             if not self.voice_connection.start_listening():
                 logger.error(
@@ -401,12 +523,16 @@ class VoiceCog(commands.Cog):
             and self.bot_state_manager.is_authorized(user)
         ):
             if await self.bot_state_manager.stop_recording():
+                self._queue_ui_update()
                 if self.voice_connection.is_recording():
                     self.voice_connection.stop_listening()
                     logger.info(
                         "Stopped listening due to cancellation. Attempting to cancel AI response."
                     )
-                    if self.active_ai_service_manager and not await self.active_ai_service_manager.cancel_ongoing_response():
+                    if (
+                        self.active_ai_service_manager
+                        and not await self.active_ai_service_manager.cancel_ongoing_response()
+                    ):
                         logger.error(
                             "Failed to request cancellation of ongoing response during user cancellation."
                         )
@@ -433,8 +559,8 @@ class VoiceCog(commands.Cog):
             return
 
         if not (
-            self.bot_state_manager.standby_message
-            and reaction.message.id == self.bot_state_manager.standby_message.id
+            self._standby_message
+            and reaction.message.id == self._standby_message.id
             and reaction.emoji == "🎙"
             and self.bot_state_manager.current_state == BotStateEnum.RECORDING
             and self.bot_state_manager.is_authorized(user)
@@ -466,7 +592,8 @@ class VoiceCog(commands.Cog):
         pcm_data = self.voice_connection.stop_listening()
         logger.info("Stopped listening on reaction remove.")
 
-        await self.bot_state_manager.stop_recording()
+        if await self.bot_state_manager.stop_recording():
+            self._queue_ui_update()
         logger.info("State transitioned back to STANDBY.")
 
         if pcm_data:
@@ -524,17 +651,28 @@ class VoiceCog(commands.Cog):
 
         if not await self.voice_connection.connect_to_channel(voice_channel):
             await ctx.send("Failed to connect to the voice channel.")
-            await self.bot_state_manager.enter_connection_error_state()
+            if await self.bot_state_manager.enter_connection_error_state():
+                self._queue_ui_update()
             return
         logger.info(f"Successfully connected to voice channel: {voice_channel.name}")
 
-        if not await self.bot_state_manager.initialize_standby(ctx):
+        if not await self.bot_state_manager.transition_to_standby():
             logger.warning(
-                "initialize_standby failed, likely because bot is already active."
+                "transition_to_standby failed, likely because bot is already active."
             )
             return
 
-        self.bot_state_manager.start_updater_task()
+        try:
+            self._standby_message = await ctx.send(self._get_standby_message_content())
+            await self._standby_message.add_reaction("🎙")
+        except discord.DiscordException as e:
+            logger.error(
+                "Failed to create standby message or add reaction: %s", e, exc_info=True
+            )
+            await self.bot_state_manager.reset_to_idle()
+            return
+
+        self.start_updater_task()
         logger.info(
             f"Connect command successful for {ctx.author.name}. Bot is in STANDBY."
         )
@@ -579,6 +717,7 @@ class VoiceCog(commands.Cog):
             # The bot is now without an active manager.
             return
 
+        self._queue_ui_update()
         await ctx.send(f"AI provider switched to '{provider_name.upper()}'.")
 
         # If the bot is already in a voice channel, connect the new provider immediately.
@@ -602,6 +741,7 @@ class VoiceCog(commands.Cog):
                     == BotStateEnum.CONNECTION_ERROR
                 ):
                     if await self.bot_state_manager.recover_to_standby():
+                        self._queue_ui_update()
                         logger.info(
                             "Recovered to STANDBY state after AI provider switch."
                         )
@@ -619,9 +759,21 @@ class VoiceCog(commands.Cog):
         Args:
             ctx: The command context containing information about the invocation
         """
-        await self.bot_state_manager.stop_updater_task()
+        await self.stop_updater_task()
+
+        message_to_delete = self._standby_message
+        self._standby_message = None
+
         await self.bot_state_manager.reset_to_idle()
         logger.info("Bot state has been reset to IDLE.")
+
+        if message_to_delete:
+            try:
+                await message_to_delete.delete()
+            except discord.NotFound:
+                pass  # It's fine if it's already gone
+            except discord.DiscordException as e:
+                logger.warning("Failed to delete standby message during reset: %s", e)
 
         errors = []
 
@@ -666,8 +818,8 @@ class VoiceCog(commands.Cog):
 
         logger.debug("Periodic connection check running...")
         channel_for_message = None
-        if self.bot_state_manager.standby_message:
-            channel_for_message = self.bot_state_manager.standby_message.channel
+        if self._standby_message:
+            channel_for_message = self._standby_message.channel
 
         if self.bot_state_manager.current_state == BotStateEnum.CONNECTION_ERROR:
             # Attempt recovery if a manager is active and connections are good.
@@ -680,6 +832,7 @@ class VoiceCog(commands.Cog):
                     "Connections appear to be restored while in CONNECTION_ERROR state. Attempting to recover to STANDBY."
                 )
                 if await self.bot_state_manager.recover_to_standby():
+                    self._queue_ui_update()
                     logger.info(
                         "Successfully recovered to STANDBY state from CONNECTION_ERROR."
                     )
