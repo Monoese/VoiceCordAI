@@ -6,11 +6,12 @@ the primary interface for the bot to interact with the OpenAI Realtime API
 via the new adapter. It will coordinate connection management, event sending,
 and event handling.
 """
+
 from __future__ import annotations
 
 import asyncio
 import base64
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, Callable, Awaitable
 
 from openai import AsyncOpenAI
 from openai.resources.beta.realtime.realtime import AsyncRealtimeConnection
@@ -19,12 +20,12 @@ from src.utils.logger import get_logger
 from src.audio.playback import AudioPlaybackManager
 from .connection import OpenAIRealtimeConnection
 from .event_mapper import OpenAIEventHandlerAdapter
-from src.ai_services.interface import IRealtimeAIServiceManager
+from src.ai_services.base_manager import BaseRealtimeManager
 
 logger = get_logger(__name__)
 
 
-class OpenAIRealtimeManager(IRealtimeAIServiceManager):
+class OpenAIRealtimeManager(BaseRealtimeManager):
     """
     Manages interactions with the OpenAI Realtime API using the OpenAI Python library.
 
@@ -36,7 +37,11 @@ class OpenAIRealtimeManager(IRealtimeAIServiceManager):
     - Managing the connection lifecycle (connect, disconnect) as per the IRealtimeAIServiceManager interface.
     """
 
-    def __init__(self, audio_playback_manager: AudioPlaybackManager, service_config: Dict[str, Any]):
+    def __init__(
+        self,
+        audio_playback_manager: AudioPlaybackManager,
+        service_config: Dict[str, Any],
+    ):
         """
         Initializes the OpenAIRealtimeManager.
 
@@ -49,32 +54,51 @@ class OpenAIRealtimeManager(IRealtimeAIServiceManager):
         """
         super().__init__(audio_playback_manager, service_config)
 
-        api_key = self._service_config.get("api_key")
-        if not api_key:
-            raise ValueError("OpenAI API key is missing in the service configuration.")
+        self._openai_client: AsyncOpenAI = AsyncOpenAI(api_key=self._api_key)
 
-        self.model_name: str = self._service_config.get("model_name")
-        if not self.model_name:
-            raise ValueError(
-                "OpenAI model name is missing in the service configuration."
-            )
-
-        self.openai_client: AsyncOpenAI = AsyncOpenAI(api_key=api_key)
-
-        self.event_handler_adapter: OpenAIEventHandlerAdapter = (
+        self._event_handler_adapter: OpenAIEventHandlerAdapter = (
             OpenAIEventHandlerAdapter(
                 audio_playback_manager=self._audio_playback_manager,
                 response_audio_format=self.response_audio_format,
             )
         )
-        self.connection_handler: OpenAIRealtimeConnection = OpenAIRealtimeConnection(
-            client=self.openai_client, model_name=self.model_name
+        self._connection_handler: OpenAIRealtimeConnection = OpenAIRealtimeConnection(
+            client=self._openai_client, model_name=self._model_name
         )
 
+    @property
+    def _event_callback(self) -> Callable[[Any], Awaitable[None]]:
+        return self._event_handler_adapter.dispatch_event
+
+    async def _post_connect_hook(self) -> bool:
+        """Sends the initial session.update data after connection."""
+        initial_session_data = self._service_config.get("initial_session_data")
+        if not initial_session_data:
+            return True  # Nothing to do, so it's a success.
+
+        conn_obj = self._connection_handler.get_active_connection()
+        if not conn_obj:
+            logger.error(
+                "Failed to get active connection object from connection_handler for session update, though handler reported connected."
+            )
+            return False
+
+        try:
+            await conn_obj.session.update(session=initial_session_data)
+            logger.info(f"Sent initial session.update: {initial_session_data}")
+            return True
+        except Exception as e:
+            logger.error(f"Error sending initial session.update: {e}", exc_info=True)
+            return False
+
     async def _get_active_conn(self) -> Optional[AsyncRealtimeConnection]:
-        """Helper to get the active connection object if connected."""
+        """Helper to get the active connection object if connected.
+
+        Returns:
+            The active `AsyncRealtimeConnection` object if connected, otherwise `None`.
+        """
         if self.is_connected():
-            conn = self.connection_handler.get_active_connection()
+            conn = self._connection_handler.get_active_connection()
             if conn:
                 return conn
             else:
@@ -82,71 +106,6 @@ class OpenAIRealtimeManager(IRealtimeAIServiceManager):
                     "_get_active_conn: is_connected() is True, but get_active_connection() returned None."
                 )
         return None
-
-    async def connect(self) -> bool:
-        """
-        Establishes a connection to the OpenAI Realtime API and initializes the session.
-        """
-        logger.info("OpenAIRealtimeManager: Attempting to connect...")
-        if self.is_connected():
-            logger.info("OpenAIRealtimeManager: Already connected.")
-            return True
-
-        await self.connection_handler.connect(self.event_handler_adapter.dispatch_event)
-
-        timeout = self._service_config.get("connection_timeout", 30.0)
-        try:
-            await asyncio.wait_for(
-                self.connection_handler.wait_until_connected(), timeout=timeout
-            )
-            logger.info(
-                "OpenAIRealtimeManager: Connection successfully established with handler."
-            )
-
-            initial_session_data = self._service_config.get("initial_session_data")
-            if initial_session_data:
-                conn_obj = self.connection_handler.get_active_connection()
-                if conn_obj:
-                    try:
-                        await conn_obj.session.update(session=initial_session_data)
-                        logger.info(
-                            f"Sent initial session.update: {initial_session_data}"
-                        )
-                    except Exception as e:
-                        logger.error(
-                            f"Error sending initial session.update: {e}",
-                            exc_info=True,
-                        )
-                        await self.connection_handler.disconnect()
-                        return False
-                else:
-                    logger.error(
-                        "Failed to get active connection object from connection_handler for session update, though handler reported connected."
-                    )
-                    await self.connection_handler.disconnect()
-                    return False
-
-            return True
-        except asyncio.TimeoutError:
-            logger.warning(
-                f"OpenAIRealtimeManager: Failed to establish connection within {timeout}s timeout."
-            )
-            await self.connection_handler.disconnect()
-            return False
-
-    async def disconnect(self) -> None:
-        """
-        Closes the connection to the OpenAI Realtime API and cleans up resources.
-        """
-        logger.info("OpenAIRealtimeManager: Attempting to disconnect...")
-        await self.connection_handler.disconnect()
-        logger.info("OpenAIRealtimeManager: Disconnected.")
-
-    def is_connected(self) -> bool:
-        """
-        Checks if the manager is currently connected by delegating to the connection handler.
-        """
-        return self.connection_handler.is_connected()
 
     async def send_audio_chunk(self, audio_data: bytes) -> bool:
         """
@@ -169,7 +128,6 @@ class OpenAIRealtimeManager(IRealtimeAIServiceManager):
         except Exception as e:
             logger.error(f"Error sending input_audio_buffer.append: {e}", exc_info=True)
             return False
-
 
     async def finalize_input_and_request_response(self) -> bool:
         """
@@ -203,7 +161,9 @@ class OpenAIRealtimeManager(IRealtimeAIServiceManager):
             logger.error("Cannot cancel response: Not connected.")
             return False
 
-        response_id_to_cancel = self._audio_playback_manager.get_current_playing_response_id()
+        response_id_to_cancel = (
+            self._audio_playback_manager.get_current_playing_response_id()
+        )
 
         payload: Dict[str, Any] = {"type": "response.cancel"}
         if response_id_to_cancel:

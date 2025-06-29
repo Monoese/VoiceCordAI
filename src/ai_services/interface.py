@@ -22,7 +22,11 @@ class IRealtimeAIServiceManager(ABC):
     It also defines properties for retrieving service-specific audio formats.
     """
 
-    def __init__(self, audio_playback_manager: AudioPlaybackManager, service_config: Dict[str, Any]) -> None:
+    def __init__(
+        self,
+        audio_playback_manager: AudioPlaybackManager,
+        service_config: Dict[str, Any],
+    ) -> None:
         """
         Initializes the AI service manager.
 
@@ -98,6 +102,9 @@ class IRealtimeAIServiceManager(ABC):
 
         Implementations should ensure that all tasks related to the connection are
         properly terminated.
+
+        Returns:
+            None.
         """
         pass
 
@@ -138,8 +145,7 @@ class IRealtimeAIServiceManager(ABC):
         Signals to the AI service that all input for the current turn has been provided
         and a response is now expected from the AI.
 
-        This is particularly relevant if the turn involved sending a stream of audio chunks
-        and did not conclude with a `send_text_message(..., finalize_turn=True)` call.
+        This is particularly relevant for turns involving a stream of audio chunks.
         Implementations will map this to the specific mechanism of their AI service:
         - For OpenAI: This would typically involve operations like 'commit_audio_buffer'
           and then 'create_response'.
@@ -147,8 +153,6 @@ class IRealtimeAIServiceManager(ABC):
             - If automatic Voice Activity Detection (VAD) is used by the service, this might
               involve sending an `audio_stream_end=True` signal.
             - If manual VAD is used, this might involve sending an `activity_end=True` signal.
-        - If the last action was `send_text_message` with `finalize_turn=True`, this method
-          might be a no-op or simply ensure the state is consistent.
 
         Returns:
             True if the signal was successfully sent and a response is anticipated,

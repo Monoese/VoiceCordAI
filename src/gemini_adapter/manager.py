@@ -6,13 +6,12 @@ the primary interface for the bot to interact with the Google Gemini Live API.
 It coordinates connection management, event sending, and event handling.
 """
 
-import asyncio
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, Callable, Awaitable
 
 from google import genai
 from google.genai import types
 
-from src.ai_services.interface import IRealtimeAIServiceManager
+from src.ai_services.base_manager import BaseRealtimeManager
 from src.audio.playback import AudioPlaybackManager
 from src.utils.logger import get_logger
 
@@ -22,7 +21,7 @@ from .connection import GeminiRealtimeConnection
 logger = get_logger(__name__)
 
 
-class GeminiRealtimeManager(IRealtimeAIServiceManager):
+class GeminiRealtimeManager(BaseRealtimeManager):
     """
     Manages interactions with the Google Gemini Live API.
 
@@ -34,7 +33,11 @@ class GeminiRealtimeManager(IRealtimeAIServiceManager):
     - Managing the connection lifecycle (connect, disconnect) as per the IRealtimeAIServiceManager interface.
     """
 
-    def __init__(self, audio_playback_manager: AudioPlaybackManager, service_config: Dict[str, Any]):
+    def __init__(
+        self,
+        audio_playback_manager: AudioPlaybackManager,
+        service_config: Dict[str, Any],
+    ):
         """
         Initializes the GeminiRealtimeManager.
 
@@ -47,42 +50,44 @@ class GeminiRealtimeManager(IRealtimeAIServiceManager):
         """
         super().__init__(audio_playback_manager, service_config)
 
-        self.api_key: str = self._service_config.get("api_key")
-        if not self.api_key:
-            raise ValueError("Gemini API key is missing in the service configuration.")
-
-        self.model_name: str = self._service_config.get("model_name")
-        if not self.model_name:
-            raise ValueError(
-                "Gemini model name is missing in the service configuration."
-            )
-
-        self.live_connect_config_params: Dict[str, Any] = self._service_config.get(
+        self._live_connect_config_params: Dict[str, Any] = self._service_config.get(
             "live_connect_config", {}
         )
 
         # Let genai.Client raise its own exception on an invalid key
-        self.gemini_client: genai.Client = genai.Client(api_key=self.api_key)
+        self._gemini_client: genai.Client = genai.Client(api_key=self._api_key)
         logger.info("Gemini client initialized with API key.")
 
-        self.event_handler_adapter: GeminiEventHandlerAdapter = (
+        self._event_handler_adapter: GeminiEventHandlerAdapter = (
             GeminiEventHandlerAdapter(
                 self._audio_playback_manager, self.response_audio_format
             )
         )
 
-        self.connection_handler: GeminiRealtimeConnection = GeminiRealtimeConnection(
-            gemini_client=self.gemini_client,
-            model_name=self.model_name,
-            live_connect_config_params=self.live_connect_config_params,
+        self._connection_handler: GeminiRealtimeConnection = GeminiRealtimeConnection(
+            gemini_client=self._gemini_client,
+            model_name=self._model_name,
+            live_connect_config_params=self._live_connect_config_params,
         )
+
+    @property
+    def _event_callback(self) -> Callable[[Any], Awaitable[None]]:
+        return self._event_handler_adapter.dispatch_event
+
+    async def _post_connect_hook(self) -> bool:
+        # Gemini does not require a post-connection setup step.
+        return True
 
     async def _get_active_session(
         self,
     ) -> Optional[genai.live.AsyncSession]:
-        """Helper to get the active session object from the connection handler."""
+        """Helper to get the active session object from the connection handler.
+
+        Returns:
+            The active `AsyncSession` object if connected, otherwise `None`.
+        """
         if self.is_connected():
-            session = self.connection_handler.get_active_session()
+            session = self._connection_handler.get_active_session()
             if session:
                 return session
             else:
@@ -90,71 +95,6 @@ class GeminiRealtimeManager(IRealtimeAIServiceManager):
                     "_get_active_session: is_connected() is True, but get_active_session() returned None."
                 )
         return None
-
-    async def connect(self) -> bool:
-        """
-        Establishes a connection to the Gemini Live API via the connection handler.
-        """
-        logger.info("GeminiRealtimeManager: Attempting to connect...")
-        if self.is_connected():
-            logger.info("GeminiRealtimeManager: Already connected.")
-            return True
-
-        if not self.connection_handler:
-            logger.error(
-                "GeminiRealtimeManager: ConnectionHandler not initialized. Cannot connect."
-            )
-            return False
-
-        if (
-            not self.gemini_client
-        ):  # Redundant check if connection_handler init implies it, but safe
-            logger.error(
-                "GeminiRealtimeManager: Cannot connect, Gemini client not initialized."
-            )
-            return False
-
-        if not self.model_name:
-            logger.error(
-                "GeminiRealtimeManager: Cannot connect, model_name not configured."
-            )
-            return False
-
-        await self.connection_handler.connect(self.event_handler_adapter.dispatch_event)
-
-        timeout = self._service_config.get("connection_timeout", 30.0)
-        try:
-            await asyncio.wait_for(
-                self.connection_handler.wait_until_connected(), timeout=timeout
-            )
-            logger.info(
-                "GeminiRealtimeManager: Connection successfully established with handler."
-            )
-            return True
-        except asyncio.TimeoutError:
-            logger.warning(
-                f"GeminiRealtimeManager: Failed to establish connection within {timeout}s timeout."
-            )
-            await self.connection_handler.disconnect()  # Ensure cleanup
-            return False
-
-    async def disconnect(self) -> None:
-        """
-        Closes the connection to the Gemini Live API via the connection handler.
-        """
-        logger.info("GeminiRealtimeManager: Attempting to disconnect...")
-        if self.connection_handler:
-            await self.connection_handler.disconnect()
-        logger.info("GeminiRealtimeManager: Disconnected.")
-
-    def is_connected(self) -> bool:
-        """
-        Checks if the manager is currently connected by delegating to the connection handler.
-        """
-        # connection_handler could be None if initialization failed.
-        if not self.connection_handler:
-            return False
-        return self.connection_handler.is_connected()
 
     async def send_audio_chunk(self, audio_data: bytes) -> bool:
         """
@@ -186,7 +126,6 @@ class GeminiRealtimeManager(IRealtimeAIServiceManager):
                 f"GeminiRealtimeManager: Error sending audio chunk: {e}", exc_info=True
             )
             return False
-
 
     async def finalize_input_and_request_response(self) -> bool:
         """
@@ -236,16 +175,23 @@ class GeminiRealtimeManager(IRealtimeAIServiceManager):
         )
 
         if current_playing_response_id:
-            logger.info(
-                f"GeminiRealtimeManager: Requesting AudioPlaybackManager to end stream: {current_playing_response_id}"
-            )
-            await (
-                self._audio_playback_manager.end_audio_stream()
-            )  # This stops playback and clears queue for the stream
-            # Note: For Gemini, the _event_loop also calls end_audio_stream when a turn naturally ends.
-            # Calling it here ensures immediate stop if user interrupts.
-            # The _event_loop's subsequent call for the same stream_id should be harmless
-            # if AudioPlaybackManager handles repeated calls to end_audio_stream gracefully.
+            try:
+                logger.info(
+                    f"GeminiRealtimeManager: Requesting AudioPlaybackManager to end stream: {current_playing_response_id}"
+                )
+                await (
+                    self._audio_playback_manager.end_audio_stream()
+                )  # This stops playback and clears queue for the stream
+                # Note: For Gemini, the _event_loop also calls end_audio_stream when a turn naturally ends.
+                # Calling it here ensures immediate stop if user interrupts.
+                # The _event_loop's subsequent call for the same stream_id should be harmless
+                # if AudioPlaybackManager handles repeated calls to end_audio_stream gracefully.
+            except Exception as e:
+                logger.error(
+                    f"GeminiRealtimeManager: Error during client-side cancellation: {e}",
+                    exc_info=True,
+                )
+                return False
         else:
             logger.info(
                 "GeminiRealtimeManager: No active audio stream reported by AudioPlaybackManager to cancel."
