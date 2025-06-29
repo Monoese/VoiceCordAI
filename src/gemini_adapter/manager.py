@@ -64,11 +64,15 @@ class GeminiRealtimeManager(BaseRealtimeManager):
             )
         )
 
-        self._connection_handler: GeminiRealtimeConnection = GeminiRealtimeConnection(
+        self._connection_handler_inst: GeminiRealtimeConnection = GeminiRealtimeConnection(
             gemini_client=self._gemini_client,
             model_name=self._model_name,
             live_connect_config_params=self._live_connect_config_params,
         )
+
+    @property
+    def _connection_handler(self) -> GeminiRealtimeConnection:
+        return self._connection_handler_inst
 
     @property
     def _event_callback(self) -> Callable[[Any], Awaitable[None]]:

@@ -62,9 +62,13 @@ class OpenAIRealtimeManager(BaseRealtimeManager):
                 response_audio_format=self.response_audio_format,
             )
         )
-        self._connection_handler: OpenAIRealtimeConnection = OpenAIRealtimeConnection(
+        self._connection_handler_inst: OpenAIRealtimeConnection = OpenAIRealtimeConnection(
             client=self._openai_client, model_name=self._model_name
         )
+
+    @property
+    def _connection_handler(self) -> OpenAIRealtimeConnection:
+        return self._connection_handler_inst
 
     @property
     def _event_callback(self) -> Callable[[Any], Awaitable[None]]:
