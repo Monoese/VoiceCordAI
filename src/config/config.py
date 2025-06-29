@@ -11,7 +11,7 @@ validation for required settings.
 import logging
 import os
 from pathlib import Path
-from typing import Optional, Union, Dict, Any
+from typing import Optional, Union
 
 from dotenv import load_dotenv
 

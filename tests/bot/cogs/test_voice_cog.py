@@ -2,7 +2,6 @@
 Unit tests for the VoiceCog class.
 """
 
-import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -129,16 +128,18 @@ def test_voice_cog_initialization(
     assert voice_cog.bot_state_manager is mock_bot_state_manager
     assert voice_cog.all_ai_service_managers is mock_ai_service_managers
     # Check if the active manager is set to the default from the patched config
-    assert (
-        voice_cog.active_ai_service_manager is mock_ai_service_managers["openai"]
-    ), "Default AI provider was not set correctly on initialization."
+    assert voice_cog.active_ai_service_manager is mock_ai_service_managers["openai"], (
+        "Default AI provider was not set correctly on initialization."
+    )
     assert voice_cog.voice_connection is not None
 
 
 def test_voice_cog_initialization_invalid_provider():
     """Tests that VoiceCog raises ValueError for an invalid default AI provider."""
     with patch.object(Config, "AI_SERVICE_PROVIDER", "invalid_provider"):
-        with pytest.raises(ValueError, match="Default AI provider 'invalid_provider' not found"):
+        with pytest.raises(
+            ValueError, match="Default AI provider 'invalid_provider' not found"
+        ):
             VoiceCog(
                 bot=MagicMock(),
                 audio_manager=MagicMock(),
@@ -165,7 +166,9 @@ async def test_connect_command_success(voice_cog: VoiceCog, mock_ctx: MagicMock)
 
 
 @pytest.mark.asyncio
-async def test_connect_command_user_not_in_voice(voice_cog: VoiceCog, mock_ctx: MagicMock):
+async def test_connect_command_user_not_in_voice(
+    voice_cog: VoiceCog, mock_ctx: MagicMock
+):
     """Tests connect command failure when the user is not in a voice channel."""
     # Arrange
     mock_ctx.author.voice = None

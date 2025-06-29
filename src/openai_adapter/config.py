@@ -1,6 +1,7 @@
 """
 Configuration for the OpenAI service adapter.
 """
+
 import os
 from typing import Dict, Any
 
@@ -12,12 +13,12 @@ OPENAI_REALTIME_MODEL_NAME: str = os.getenv(
 )
 
 # Default initial session data for OpenAI.
-OPENAI_SERVICE_INITIAL_SESSION_DATA: Dict[str, Any] = {
-    "turn_detection": None
-}
+OPENAI_SERVICE_INITIAL_SESSION_DATA: Dict[str, Any] = {"turn_detection": None}
 
 # Default data for creating a response.
-OPENAI_SERVICE_RESPONSE_CREATION_DATA: Dict[str, Any] = {"modalities": ["text", "audio"]}
+OPENAI_SERVICE_RESPONSE_CREATION_DATA: Dict[str, Any] = {
+    "modalities": ["text", "audio"]
+}
 
 # Assembles the complete service configuration dictionary for OpenAI.
 # This dictionary is imported by the bot's main entry point to be used in the factory.

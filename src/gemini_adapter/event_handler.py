@@ -4,6 +4,7 @@ Gemini Event Handler Adapter.
 This module provides the GeminiEventHandlerAdapter class, responsible for
 processing synthetic events generated from the Gemini Live API stream.
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -134,12 +135,15 @@ class GeminiEventHandlerAdapter:
                         )
                         return
 
-                logger.debug(f"Received audio data chunk, size: {len(audio_data)} bytes.")
+                logger.debug(
+                    f"Received audio data chunk, size: {len(audio_data)} bytes."
+                )
                 try:
                     await self.audio_playback_manager.add_audio_chunk(audio_data)
                 except Exception as e:
                     logger.error(
-                        f"Error adding audio chunk to AudioPlaybackManager: {e}", exc_info=True
+                        f"Error adding audio chunk to AudioPlaybackManager: {e}",
+                        exc_info=True,
                     )
 
             if text_data:
@@ -158,7 +162,9 @@ class GeminiEventHandlerAdapter:
         stream and clearing the active turn state.
         """
         if event.turn_id == self._active_turn_id:
-            logger.info(f"GeminiEventHandler: Ending audio stream for turn: {event.turn_id}")
+            logger.info(
+                f"GeminiEventHandler: Ending audio stream for turn: {event.turn_id}"
+            )
             # Only end the stream if it was actually started.
             if self._stream_started_for_turn:
                 await self.audio_playback_manager.end_audio_stream()

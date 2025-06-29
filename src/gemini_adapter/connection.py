@@ -163,7 +163,9 @@ class GeminiRealtimeConnection:
                 logger.info("Shutdown signal detected. Halting reconnection attempts.")
                 break
 
-            logger.info(f"Waiting {retry_delay:.1f} seconds before next connection attempt.")
+            logger.info(
+                f"Waiting {retry_delay:.1f} seconds before next connection attempt."
+            )
             await asyncio.sleep(retry_delay)
             retry_delay = min(retry_delay * 2, max_retry_delay)
 

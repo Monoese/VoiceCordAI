@@ -2,7 +2,7 @@ import asyncio
 import os
 from dataclasses import dataclass, field
 from enum import Enum, auto
-from typing import Any, Optional, Tuple, Callable
+from typing import Optional, Tuple, Callable
 
 from discord import FFmpegPCMAudio
 from discord.ext import voice_recv
@@ -68,7 +68,6 @@ class AudioPlaybackManager:
             set()
         )  # Tracks streams for which EOS has been queued
         logger.debug("AudioPlaybackManager initialized for streaming playback.")
-
 
     def get_current_playing_response_id(self) -> Optional[str]:
         """

@@ -27,7 +27,6 @@ from src.openai_adapter.manager import OpenAIRealtimeManager
 from src.openai_adapter.config import OPENAI_SERVICE_CONFIG
 from src.gemini_adapter.manager import GeminiRealtimeManager
 from src.gemini_adapter.config import GEMINI_SERVICE_CONFIG
-from src.ai_services.interface import IRealtimeAIServiceManager
 
 
 # Configure discord.py's internal logging.

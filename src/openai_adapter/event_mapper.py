@@ -6,6 +6,7 @@ This module provides the OpenAIEventHandlerAdapter class, responsible for:
 - Dispatching these events to appropriate handler methods based on event.type.
 - Adapting the logic from the existing WebSocketEventHandler to work with OpenAI's event structures.
 """
+
 from __future__ import annotations
 
 import base64

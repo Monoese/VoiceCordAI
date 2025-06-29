@@ -1,6 +1,7 @@
 """
 Configuration for the Gemini service adapter.
 """
+
 import os
 from typing import Dict, Any
 

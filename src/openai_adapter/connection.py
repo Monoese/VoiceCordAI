@@ -121,7 +121,9 @@ class OpenAIRealtimeConnection:
 
                     # If the loop exits cleanly, it means the server closed the connection.
                     # We will attempt to reconnect after a delay unless a shutdown was signaled.
-                    logger.info("Event stream ended. Connection likely closed by server.")
+                    logger.info(
+                        "Event stream ended. Connection likely closed by server."
+                    )
 
             except Exception as e:
                 # This catches errors during the connect() call or the event loop.
@@ -141,7 +143,9 @@ class OpenAIRealtimeConnection:
                 break
 
             # Wait before retrying to avoid spamming the API.
-            logger.info(f"Waiting {retry_delay:.1f} seconds before next connection attempt.")
+            logger.info(
+                f"Waiting {retry_delay:.1f} seconds before next connection attempt."
+            )
             await asyncio.sleep(retry_delay)
 
             # Increase delay for the next attempt (exponential backoff).
