@@ -455,7 +455,7 @@ class AudioPlaybackManager:
 
         def after_playback_callback(
             error: Optional[Exception], played_source_stream_id: str
-        ):
+        ) -> None:
             """
             Callback passed to voice_client.play(), triggered on playback end/error.
             This callback is the primary trigger for transitioning to the STOPPING state.
