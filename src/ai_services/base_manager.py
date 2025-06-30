@@ -49,7 +49,7 @@ class BaseRealtimeManager(IRealtimeAIServiceManager):
         self,
         audio_playback_manager: AudioPlaybackManager,
         service_config: Dict[str, Any],
-    ):
+    ) -> None:
         """
         Initializes the BaseRealtimeManager.
 
@@ -150,6 +150,9 @@ class BaseRealtimeManager(IRealtimeAIServiceManager):
     async def disconnect(self) -> None:
         """
         Closes the connection using the provider-specific connection handler.
+
+        Returns:
+            None.
         """
         manager_name = self.__class__.__name__
         logger.info(f"{manager_name}: Attempting to disconnect...")

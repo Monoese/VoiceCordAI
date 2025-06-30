@@ -74,6 +74,8 @@ class BaseConnectionHandler(ABC):
         self._shutdown_signal.clear()
         self._event_callback = event_callback
 
+        # This wrapper ensures that `_is_attempting_connection` is reset
+        # even if the `_run_event_loop` task is cancelled or fails.
         async def _connect_task_wrapper():
             try:
                 await self._run_event_loop()
