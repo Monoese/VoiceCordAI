@@ -87,14 +87,18 @@ class BotState:
 
     @property
     def active_ai_provider_name(self) -> str:
-        """
-        Get the name of the currently active AI service provider.
+        """Get the name of the currently active AI service provider.
+
+        Returns:
+            str: The name of the active AI provider.
         """
         return self._active_ai_provider_name
 
     def get_authority_user_name(self) -> str:
-        """
-        Get the display name of the user who currently has authority.
+        """Get the display name of the user who currently has authority.
+
+        Returns:
+            str: The display name of the authority user.
         """
         return self._authority_user_name
 
