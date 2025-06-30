@@ -64,10 +64,12 @@ class GeminiRealtimeManager(BaseRealtimeManager):
             )
         )
 
-        self._connection_handler_inst: GeminiRealtimeConnection = GeminiRealtimeConnection(
-            gemini_client=self._gemini_client,
-            model_name=self._model_name,
-            live_connect_config_params=self._live_connect_config_params,
+        self._connection_handler_inst: GeminiRealtimeConnection = (
+            GeminiRealtimeConnection(
+                gemini_client=self._gemini_client,
+                model_name=self._model_name,
+                live_connect_config_params=self._live_connect_config_params,
+            )
         )
 
     @property

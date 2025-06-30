@@ -62,8 +62,10 @@ class OpenAIRealtimeManager(BaseRealtimeManager):
                 response_audio_format=self.response_audio_format,
             )
         )
-        self._connection_handler_inst: OpenAIRealtimeConnection = OpenAIRealtimeConnection(
-            client=self._openai_client, model_name=self._model_name
+        self._connection_handler_inst: OpenAIRealtimeConnection = (
+            OpenAIRealtimeConnection(
+                client=self._openai_client, model_name=self._model_name
+            )
         )
 
     @property
