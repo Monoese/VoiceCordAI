@@ -82,6 +82,9 @@ class Config:
         and have valid values. It is called automatically when the module
         is imported.
 
+        Returns:
+            None.
+
         Raises:
             ConfigError: If a required configuration is missing or invalid.
         """
