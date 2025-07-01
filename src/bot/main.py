@@ -2,12 +2,11 @@
 Main entry point for the Discord bot application.
 
 This module initializes all the necessary components for the bot to function:
-- Audio management for voice processing
-- Bot state management for tracking the bot's current state
 - Real-time AI service communication via a factory pattern
 - Discord bot setup with appropriate intents and command prefix
 
-The bot is configured to use the VoiceCog for handling voice-related commands and events.
+The bot is configured to use the VoiceCog, which manages all voice-related commands
+and events by delegating to per-guild session managers.
 """
 
 import asyncio
@@ -16,10 +15,8 @@ from typing import Dict
 import discord
 from discord.ext import commands
 
-from src.audio.playback import AudioPlaybackManager
 from src.bot.cogs.voice_cog import VoiceCog
 from src.config.config import Config
-from src.state.state import BotState
 from src.utils.logger import get_logger
 
 # Import managers and their configurations
@@ -33,10 +30,6 @@ from src.gemini_adapter.config import GEMINI_SERVICE_CONFIG
 discord.utils.setup_logging(level=Config.LOG_CONSOLE_LEVEL, root=False)
 
 logger = get_logger(__name__)
-
-# --- Initialize Core Application Components ---
-audio_playback_manager: AudioPlaybackManager = AudioPlaybackManager()
-bot_state_manager: BotState = BotState()
 
 # --- Set up AI Service Communication Layer ---
 # Instead of instances, we create a factory registry.
@@ -66,7 +59,7 @@ intents.message_content = True
 bot: commands.Bot = commands.Bot(command_prefix=Config.COMMAND_PREFIX, intents=intents)
 
 
-async def main():
+async def main() -> None:
     """
     Main asynchronous function that starts the Discord bot.
 
@@ -79,8 +72,6 @@ async def main():
     async with bot:
         voice_cog_instance = VoiceCog(
             bot=bot,
-            audio_playback_manager=audio_playback_manager,
-            bot_state_manager=bot_state_manager,
             ai_service_factories=ai_service_factories,  # Pass the dictionary of factories
         )
         await bot.add_cog(voice_cog_instance)

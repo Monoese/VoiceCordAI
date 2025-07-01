@@ -48,8 +48,15 @@ class Config:
     CONNECTION_TIMEOUT: int = (
         15 * 60
     )  # Timeout for voice channel connections in seconds
+    CONNECTION_CHECK_INTERVAL: float = float(
+        os.getenv("CONNECTION_CHECK_INTERVAL", "10.0")
+    )
     AI_SERVICE_CONNECTION_TIMEOUT: float = 30.0  # Timeout for AI service connections
     CHUNK_DURATION_MS: int = 500  # Duration of audio chunks in milliseconds
+
+    # --- UI/UX Settings ---
+    REACTION_START_RECORDING: str = os.getenv("REACTION_START_RECORDING", "🎙")
+    REACTION_CANCEL_RECORDING: str = os.getenv("REACTION_CANCEL_RECORDING", "❌")
 
     # --- Audio Processing Settings ---
     # General Audio
