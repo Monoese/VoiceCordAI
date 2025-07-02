@@ -723,24 +723,50 @@ class GuildSession:
             )
             return
 
+        # --- Validation Phase ---
+        # 1. Create the new manager instance without making it active yet.
+        manager_class, service_config = self.ai_service_factories[provider_name]
+        try:
+            new_manager = manager_class(
+                audio_playback_manager=self.audio_playback_manager,
+                service_config=service_config,
+            )
+        except (ValueError, Exception) as e:
+            logger.error(
+                f"Failed to create AI service manager for '{provider_name}' in guild {self.guild.id}: {e}",
+                exc_info=True,
+            )
+            await ctx.send(
+                f"Failed to initialize AI provider '{provider_name.upper()}'. "
+                f"Please check your configuration (e.g., API key). Error: {e}"
+            )
+            return  # Abort, keeping the old provider active.
+
+        # 2. If already in a voice call, try to connect the new manager before committing.
+        if self.voice_connection.is_connected():
+            if not await new_manager.connect():
+                await ctx.send(
+                    f"Failed to connect to the new AI provider '{provider_name.upper()}'. "
+                    "The switch has been aborted, and the previous provider remains active."
+                )
+                await (
+                    new_manager.disconnect()
+                )  # Ensure cleanup of the failed temporary manager
+                return  # Abort, keeping the old provider active.
+
+        # --- Commit Phase ---
+        # The new provider is validated and connected. Now, commit the switch.
         await self._shutdown_current_ai_provider()
-
-        if not await self._create_and_set_manager(provider_name, ctx):
-            return
-
+        self.active_ai_service_manager = new_manager
+        await self.bot_state.set_active_ai_provider_name(provider_name)
         self._queue_ui_update()
         await ctx.send(f"AI provider switched to '{provider_name.upper()}'.")
 
-        if self.voice_connection.is_connected():
-            if not await self.active_ai_service_manager.connect():
-                await self.bot_state.enter_connection_error_state()
-                await ctx.send(
-                    f"Connected to voice, but failed to connect to '{provider_name.upper()}'. Bot is in an error state."
-                )
-            else:
-                if self.bot_state.current_state == BotStateEnum.CONNECTION_ERROR:
-                    if await self.bot_state.recover_to_standby():
-                        self._queue_ui_update()
+        # If we were in an error state, try to recover.
+        if self.bot_state.current_state == BotStateEnum.CONNECTION_ERROR:
+            # We already know voice is connected and the new AI service is connected.
+            if await self.bot_state.recover_to_standby():
+                self._queue_ui_update()
 
     @tasks.loop(seconds=Config.CONNECTION_CHECK_INTERVAL)
     async def _connection_check_loop(self) -> None:
