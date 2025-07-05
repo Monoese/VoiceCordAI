@@ -67,7 +67,29 @@ class AudioPlaybackManager:
         self._eos_queued_for_streams: set[str] = (
             set()
         )  # Tracks streams for which EOS has been queued
+        self._playback_task: Optional[asyncio.Task] = None
         logger.debug("AudioPlaybackManager initialized for streaming playback.")
+
+    def start(self, voice_client: voice_recv.VoiceRecvClient) -> None:
+        """Starts the playback loop as a background task."""
+        if self._playback_task is None or self._playback_task.done():
+            logger.info("Starting playback loop task.")
+            self._playback_task = asyncio.create_task(self.playback_loop(voice_client))
+        else:
+            logger.info("Playback loop task is already running.")
+
+    async def stop(self) -> None:
+        """Stops the playback loop task gracefully."""
+        if self._playback_task and not self._playback_task.done():
+            logger.info("Stopping playback loop task.")
+            self._playback_task.cancel()
+            try:
+                await self._playback_task
+            except asyncio.CancelledError:
+                logger.info("Playback loop task successfully cancelled.")
+            except Exception as e:  # pragma: no cover
+                logger.error(f"Error during playback loop task stop: {e}")
+        self._playback_task = None
 
     def get_current_playing_response_id(self) -> Optional[str]:
         """

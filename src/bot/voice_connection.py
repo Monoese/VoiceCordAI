@@ -8,7 +8,6 @@ This module provides the VoiceConnectionManager class which handles:
 - Setting up audio recording and playback
 """
 
-import asyncio
 from typing import Optional
 
 import discord
@@ -47,7 +46,6 @@ class VoiceConnectionManager:
         self.bot = bot
         self.audio_playback_manager = audio_playback_manager
         self.voice_client: Optional[voice_recv.VoiceRecvClient] = None
-        self._playback_task: Optional[asyncio.Task] = None
 
     async def connect_to_channel(self, voice_channel: discord.VoiceChannel) -> bool:
         """
@@ -72,13 +70,7 @@ class VoiceConnectionManager:
 
             # Ensure playback loop is running for this voice client
             if self.voice_client and self.voice_client.is_connected():
-                if self._playback_task is None or self._playback_task.done():
-                    logger.info("Starting new playback loop task.")
-                    self._playback_task = self.bot.loop.create_task(
-                        self.audio_playback_manager.playback_loop(self.voice_client)
-                    )
-                else:
-                    logger.info("Playback loop task already running.")
+                self.audio_playback_manager.start(self.voice_client)
                 return True
             return False  # Should not happen if connect/move_to succeeded
         except Exception as e:
@@ -105,18 +97,7 @@ class VoiceConnectionManager:
                 self.voice_client.stop_listening()
                 logger.info("Stopped listening.")
 
-            if (
-                self._playback_task and not self._playback_task.done()
-            ):  # Cancel audio playback loop
-                self._playback_task.cancel()
-                try:
-                    await self._playback_task  # Allow task to process cancellation
-                except asyncio.CancelledError:
-                    logger.info("Playback loop task cancelled successfully.")
-                except Exception as e_task:  # pragma: no cover
-                    logger.error(f"Error during playback task cancellation: {e_task}")
-                finally:
-                    self._playback_task = None
+            await self.audio_playback_manager.stop()
 
             await self.voice_client.disconnect()
             logger.info(f"Disconnected from voice channel: {channel_name}")
