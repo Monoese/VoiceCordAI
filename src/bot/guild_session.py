@@ -7,8 +7,7 @@ ensures that the bot can operate in multiple guilds simultaneously without any
 state conflicts.
 """
 
-import asyncio
-from typing import Any, Dict, Optional, Set, Union
+from typing import Dict
 
 import discord
 from discord.ext import commands, tasks

@@ -1,6 +1,7 @@
 """
 UI Manager module for handling GuildSession UI components.
 """
+
 import asyncio
 from typing import Optional
 

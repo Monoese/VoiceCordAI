@@ -115,9 +115,7 @@ class InteractionHandler:
                 f"{user.display_name} canceled recording. Returning to standby."
             )
 
-    async def _handle_stop_recording_reaction(
-        self, reaction: discord.Reaction
-    ) -> None:
+    async def _handle_stop_recording_reaction(self, reaction: discord.Reaction) -> None:
         """Handles the stop recording reaction (reaction removal)."""
         if self.bot_state.current_state == BotStateEnum.CONNECTION_ERROR:
             logger.debug(
@@ -240,7 +238,9 @@ class InteractionHandler:
                 f"Audio processing complete for guild {self.guild_id}. Processed data size: {len(processed_pcm_data)} bytes."
             )
             if not await self.ai_coordinator.send_audio_turn(processed_pcm_data):
-                await channel.send("Sorry, I encountered an error sending your audio to the AI service.")
+                await channel.send(
+                    "Sorry, I encountered an error sending your audio to the AI service."
+                )
                 await self.bot_state.enter_connection_error_state()
 
         except asyncio.CancelledError:

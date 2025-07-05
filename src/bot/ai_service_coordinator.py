@@ -7,15 +7,14 @@ managing the lifecycle and interactions with the AI service providers.
 
 from __future__ import annotations
 
-import asyncio
-from typing import Any, Dict, Optional, Tuple
+from typing import Dict, Optional, Tuple
 
 from discord.ext import commands
 
 from src.ai_services.interface import IRealtimeAIServiceManager
 from src.audio.playback import AudioPlaybackManager
 from src.config.config import Config
-from src.state.state import BotState, BotStateEnum
+from src.state.state import BotState
 from src.utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -61,9 +60,7 @@ class AIServiceCoordinator:
     async def send_audio_turn(self, pcm_data: bytes) -> bool:
         """Sends a full audio turn (chunk + finalize) to the AI service."""
         if not self.is_connected() or not self.active_ai_service_manager:
-            logger.error(
-                f"Cannot send audio for guild {self.guild_id}: Not connected."
-            )
+            logger.error(f"Cannot send audio for guild {self.guild_id}: Not connected.")
             return False
 
         if not await self.active_ai_service_manager.send_audio_chunk(pcm_data):
@@ -92,9 +89,7 @@ class AIServiceCoordinator:
             )
             await self.cancel_ongoing_response()
             await self.active_ai_service_manager.disconnect()
-            logger.info(
-                f"Disconnected from {provider_name} for guild {self.guild_id}."
-            )
+            logger.info(f"Disconnected from {provider_name} for guild {self.guild_id}.")
         self.active_ai_service_manager = None
 
     async def ensure_connected(self, ctx: commands.Context) -> bool:
@@ -121,9 +116,7 @@ class AIServiceCoordinator:
             self.bot_state.active_ai_provider_name == provider_name
             and self.is_connected()
         ):
-            await ctx.send(
-                f"AI provider is already set to '{provider_name.upper()}'."
-            )
+            await ctx.send(f"AI provider is already set to '{provider_name.upper()}'.")
             return True
 
         new_manager = await self._validate_new_provider(
