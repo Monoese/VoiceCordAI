@@ -9,6 +9,7 @@ This module provides the OpenAIEventHandlerAdapter class, responsible for:
 
 from __future__ import annotations
 
+import asyncio
 import base64
 from typing import Callable, Awaitable, Dict, Optional, Tuple
 
@@ -172,7 +173,10 @@ class OpenAIEventHandlerAdapter:
             )
 
         try:
-            decoded_audio = base64.b64decode(base64_audio_chunk)
+            loop = asyncio.get_running_loop()
+            decoded_audio = await loop.run_in_executor(
+                None, base64.b64decode, base64_audio_chunk
+            )
             await self.audio_playback_manager.add_audio_chunk(decoded_audio)
         except Exception as e:
             logger.error(
