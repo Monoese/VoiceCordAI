@@ -55,7 +55,9 @@ class GuildSession:
         self.bot_state = BotState()
         self.ui_manager = SessionUIManager(guild.id, self.bot_state)
         self.audio_playback_manager = AudioPlaybackManager()
-        self.voice_connection = VoiceConnectionManager(bot, self.audio_playback_manager)
+        self.voice_connection = VoiceConnectionManager(
+            self.guild, self.audio_playback_manager
+        )
         self.ai_coordinator = AIServiceCoordinator(
             bot_state=self.bot_state,
             audio_playback_manager=self.audio_playback_manager,
