@@ -54,7 +54,7 @@ class GuildSession:
         # Guild-specific instances of core components
         self.bot_state = BotState()
         self.ui_manager = SessionUIManager(guild.id, self.bot_state)
-        self.audio_playback_manager = AudioPlaybackManager()
+        self.audio_playback_manager = AudioPlaybackManager(self.guild)
         self.voice_connection = VoiceConnectionManager(
             self.guild, self.audio_playback_manager
         )

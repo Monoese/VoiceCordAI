@@ -77,7 +77,7 @@ class VoiceConnectionManager:
             # After connecting/moving, get the authoritative client again to start playback.
             current_vc = self._get_voice_client()
             if current_vc and current_vc.is_connected():
-                self.audio_playback_manager.start(current_vc)
+                self.audio_playback_manager.start()
                 return True
 
             logger.warning(
