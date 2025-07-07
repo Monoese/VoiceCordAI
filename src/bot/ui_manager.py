@@ -8,7 +8,7 @@ from typing import Optional
 import discord
 
 from src.config.config import Config
-from src.state.state import BotState, BotStateEnum, StateChangedEvent
+from src.state.state import BotState, BotStateEnum, StateEvent
 from src.utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -25,7 +25,7 @@ class SessionUIManager:
         self._updater_task: Optional[asyncio.Task[None]] = None
         self.bot_state.subscribe_to_state_changes(self._on_state_change)
 
-    async def _on_state_change(self, event: StateChangedEvent) -> None:
+    async def _on_state_change(self, event: StateEvent) -> None:
         """Callback for when bot state changes, which schedules a UI update."""
         self.schedule_update()
 

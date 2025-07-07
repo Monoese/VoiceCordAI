@@ -14,7 +14,7 @@ prevents conflicting operations from occurring simultaneously.
 import asyncio
 from dataclasses import dataclass
 from enum import Enum
-from typing import Optional, List, Callable, Awaitable
+from typing import Optional, List, Callable, Awaitable, Union
 
 import discord
 from src.config.config import Config
@@ -29,6 +29,16 @@ class StateChangedEvent:
 
     old_state: "BotStateEnum"
     new_state: "BotStateEnum"
+
+
+@dataclass
+class ProviderChangedEvent:
+    """Event fired when the AI provider changes."""
+
+    new_provider_name: str
+
+
+StateEvent = Union[StateChangedEvent, ProviderChangedEvent]
 
 
 class BotStateEnum(Enum):
@@ -73,7 +83,7 @@ class BotState:
         self._active_ai_provider_name: str = (
             Config.AI_SERVICE_PROVIDER
         )  # Initialize with default
-        self._listeners: List[Callable[[StateChangedEvent], Awaitable[None]]] = []
+        self._listeners: List[Callable[[StateEvent], Awaitable[None]]] = []
 
     @property
     def current_state(self) -> BotStateEnum:
@@ -113,10 +123,15 @@ class BotState:
         return self._authority_user_name
 
     def subscribe_to_state_changes(
-        self, callback: Callable[[StateChangedEvent], Awaitable[None]]
+        self, callback: Callable[[StateEvent], Awaitable[None]]
     ) -> None:
         """Subscribe a listener to be called on state changes."""
         self._listeners.append(callback)
+
+    async def _notify_listeners(self, event: StateEvent) -> None:
+        """Notifies all listeners of a given event."""
+        for listener in self._listeners:
+            asyncio.create_task(listener(event))
 
     async def _set_state(self, new_state: BotStateEnum) -> bool:
         """Atomically sets a new state and notifies listeners."""
@@ -127,8 +142,7 @@ class BotState:
         self._current_state = new_state
 
         event = StateChangedEvent(old_state=old_state, new_state=new_state)
-        for listener in self._listeners:
-            asyncio.create_task(listener(event))
+        await self._notify_listeners(event)
 
         return True
 
@@ -140,7 +154,11 @@ class BotState:
             provider_name: The name of the provider (e.g., "openai", "gemini").
         """
         async with self._lock:
+            if self._active_ai_provider_name == provider_name:
+                return
             self._active_ai_provider_name = provider_name
+            event = ProviderChangedEvent(new_provider_name=provider_name)
+            await self._notify_listeners(event)
 
     def _reset_authority(self) -> None:
         """Atomically resets the authority user to 'anyone'."""
