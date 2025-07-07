@@ -7,6 +7,7 @@ A Discord bot that enables real-time voice chat with AI from providers like Open
 - Real-time voice conversations with AI in Discord voice channels.
 - Support for multiple providers (OpenAI GPT-4, Google Gemini).
 - Simple, reaction-based controls for push-to-talk style interaction.
+- Privacy-focused with an opt-in consent model for voice recording.
 - Switch between AI providers on-the-fly with a command.
 
 ## Getting Started
