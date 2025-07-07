@@ -1,6 +1,6 @@
-# VoiceCordAI - Discord Voice Chat Bot
+# VoiceCordAI - Voice Chat Bot in Discord
 
-A Discord bot that enables real-time voice conversations between users and various AI services, including OpenAI's GPT-4 and Google's Gemini. Users can engage in natural voice interactions with the selected AI through Discord voice channels.
+A Discord bot that enables real-time voice chat with AI from providers like OpenAI and Google Gemini, directly within a Discord voice channel.
 
 ## Features
 
