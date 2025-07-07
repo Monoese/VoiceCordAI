@@ -84,11 +84,16 @@ class VoiceCog(commands.Cog):
         before: discord.VoiceState,
         after: discord.VoiceState,
     ) -> None:
-        """Listen for bot's own voice connection changes."""
+        """
+        Listen for the bot's own voice connection changes to handle disconnects.
+
+        This listener filters for events where the bot is moved, disconnected, or
+        connected to a voice channel, ignoring state changes like mute or deafen.
+        It then delegates the event to the appropriate GuildSession.
+        """
         if member.id != self.bot.user.id or not member.guild:
             return
 
-        # Don't trigger on mute/deafen events
         if before.channel == after.channel:
             return
 
@@ -187,7 +192,11 @@ class VoiceCog(commands.Cog):
     @commands.command(name="disconnect")
     async def disconnect_command(self, ctx: commands.Context) -> None:
         """
-        Delegates the 'disconnect' command to a GuildSession and cleans it up.
+        Terminates and cleans up the session for the current guild.
+
+        This command delegates the cleanup logic to the GuildSession and ensures
+        the session is removed from the cog's memory, effectively ending its
+        lifecycle.
 
         Args:
             ctx: The command context.
@@ -204,6 +213,15 @@ class VoiceCog(commands.Cog):
         await ctx.send("Session terminating...")
         try:
             await session.cleanup()
+            await ctx.send("Session terminated successfully.")
+        except Exception as e:
+            logger.error(
+                f"An error occurred during session cleanup for guild {ctx.guild.id}: {e}",
+                exc_info=True,
+            )
+            await ctx.send(
+                "An error occurred during cleanup. The session has been forcefully removed."
+            )
         finally:
             del self._sessions[ctx.guild.id]
             logger.info(

@@ -50,7 +50,6 @@ class GuildSession:
         self.guild = guild
         self.bot = bot
 
-        # Guild-specific instances of core components
         self.bot_state = BotState()
         self.ui_manager = SessionUIManager(guild.id, self.bot_state)
         self.audio_playback_manager = AudioPlaybackManager(self.guild)
@@ -153,7 +152,20 @@ class GuildSession:
 
     async def connect(self, ctx: commands.Context) -> bool:
         """
-        Handles the logic of the 'connect' command.
+        Handles the full connection logic when a user issues the /connect command.
+
+        This method orchestrates the entire session startup sequence:
+        1. Ensures a connection to the AI service is active.
+        2. Connects the bot to the user's voice channel.
+        3. Transitions the bot's state to STANDBY.
+        4. Creates and displays the persistent UI message.
+        5. Starts all necessary background tasks for the session.
+
+        Args:
+            ctx: The command context from the user's invocation.
+
+        Returns:
+            True if the entire connection and setup process succeeds, False otherwise.
         """
         if ctx.author.voice is None:
             await ctx.send("You are not connected to a voice channel.")
@@ -203,5 +215,3 @@ class GuildSession:
             on_disconnect=self._on_ai_disconnect,
         ):
             await ctx.send(f"AI provider switched to '{provider_name.upper()}'.")
-
-            # Recovery is now handled automatically by the on_connect callback.

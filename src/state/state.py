@@ -14,7 +14,7 @@ prevents conflicting operations from occurring simultaneously.
 import asyncio
 from dataclasses import dataclass
 from enum import Enum
-from typing import Optional, List, Callable, Awaitable, Union
+from typing import List, Callable, Awaitable, Union
 
 import discord
 from src.config.config import Config
@@ -78,11 +78,9 @@ class BotState:
         """
         self._lock = asyncio.Lock()
         self._current_state: BotStateEnum = BotStateEnum.IDLE
-        self._authority_user_id: Optional[str] = "anyone"  # User ID or "anyone"
-        self._authority_user_name: Optional[str] = "anyone"  # User display name
-        self._active_ai_provider_name: str = (
-            Config.AI_SERVICE_PROVIDER
-        )  # Initialize with default
+        self._authority_user_id: Union[str, int] = "anyone"
+        self._authority_user_name: str = "anyone"
+        self._active_ai_provider_name: str = Config.AI_SERVICE_PROVIDER
         self._listeners: List[Callable[[StateEvent], Awaitable[None]]] = []
 
     @property
@@ -96,12 +94,12 @@ class BotState:
         return self._current_state
 
     @property
-    def authority_user_id(self) -> str:
+    def authority_user_id(self) -> Union[str, int]:
         """
         Get the ID of the user who currently has authority to control the bot.
 
         Returns:
-            str: The user ID or "anyone" if no specific user has authority
+            Union[str, int]: The user ID (int) or "anyone" (str).
         """
         return self._authority_user_id
 
@@ -161,12 +159,20 @@ class BotState:
             await self._notify_listeners(event)
 
     def _reset_authority(self) -> None:
-        """Atomically resets the authority user to 'anyone'."""
+        """
+        Resets the authority user to 'anyone'.
+
+        This is a helper method and must be called from within a locked context.
+        """
         self._authority_user_id = "anyone"
         self._authority_user_name = "anyone"
 
     def _set_authority(self, user: discord.User) -> None:
-        """Atomically sets the authority user's ID and name."""
+        """
+        Sets the authority user's ID and name.
+
+        This is a helper method and must be called from within a locked context.
+        """
         self._authority_user_id = user.id
         self._authority_user_name = user.name
 
