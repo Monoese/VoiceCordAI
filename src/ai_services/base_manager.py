@@ -25,7 +25,10 @@ class ConnectionHandler(Protocol):
     """Defines the interface for connection handler classes."""
 
     async def connect(
-        self, event_callback: Callable[[Any], Awaitable[None]]
+        self,
+        event_callback: Callable[[Any], Awaitable[None]],
+        on_connect: Callable[[], Awaitable[None]],
+        on_disconnect: Callable[[], Awaitable[None]],
     ) -> None: ...
 
     async def disconnect(self) -> None: ...
@@ -100,7 +103,11 @@ class BaseRealtimeManager(IRealtimeAIServiceManager):
         """
         pass
 
-    async def connect(self) -> bool:
+    async def connect(
+        self,
+        on_connect: Callable[[], Awaitable[None]],
+        on_disconnect: Callable[[], Awaitable[None]],
+    ) -> bool:
         """
         Establishes a connection using the provider-specific connection handler.
         This method implements the common connection logic.
@@ -116,7 +123,9 @@ class BaseRealtimeManager(IRealtimeAIServiceManager):
 
         timeout = self._service_config.get("connection_timeout", 30.0)
         try:
-            await self._connection_handler.connect(self._event_callback)
+            await self._connection_handler.connect(
+                self._event_callback, on_connect, on_disconnect
+            )
 
             await asyncio.wait_for(
                 self._connection_handler.wait_until_connected(), timeout=timeout

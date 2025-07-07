@@ -3,7 +3,7 @@ Interaction Handler module for processing user interactions within a GuildSessio
 """
 
 import asyncio
-from typing import Any, Optional, Set, Union
+from typing import Any, Set
 
 import discord
 import openai
@@ -58,9 +58,6 @@ class InteractionHandler:
         self, reaction: discord.Reaction, user: discord.User
     ) -> None:
         """Handles the start recording reaction."""
-        if await self.check_and_handle_connection_issues(reaction.message.channel):
-            return
-
         guild = self.bot.get_guild(self.guild_id)
         if not guild:
             return
@@ -82,14 +79,11 @@ class InteractionHandler:
             )
             return
 
-        self.ui_manager.schedule_update()
-
         if not self.voice_connection.start_listening():
             logger.error(
                 f"Failed to start listening for user {user.name} in guild {self.guild_id}. Rolling back state."
             )
             await self.bot_state.stop_recording()
-            self.ui_manager.schedule_update()
             await reaction.message.channel.send(
                 f"Sorry {user.mention}, I couldn't start recording due to a technical issue."
             )
@@ -101,7 +95,6 @@ class InteractionHandler:
     ) -> None:
         """Handles the cancel recording reaction."""
         if await self.bot_state.stop_recording():
-            self.ui_manager.schedule_update()
             if self.voice_connection.is_recording():
                 self.voice_connection.stop_listening()
                 logger.info(
@@ -123,22 +116,9 @@ class InteractionHandler:
             )
             return
 
-        if await self.check_and_handle_connection_issues(reaction.message.channel):
-            if self.voice_connection.is_recording():
-                self.voice_connection.stop_listening()
-            return
-
-        if not self.voice_connection.is_connected():
-            await reaction.message.channel.send(
-                "Bot is not in a voice channel or voice client is missing."
-            )
-            await self.bot_state.stop_recording()
-            return
-
         pcm_data = self.voice_connection.stop_listening()
 
-        if await self.bot_state.stop_recording():
-            self.ui_manager.schedule_update()
+        await self.bot_state.stop_recording()
 
         if pcm_data:
             task = asyncio.create_task(
@@ -148,61 +128,6 @@ class InteractionHandler:
             task.add_done_callback(self._background_tasks.discard)
         else:
             await reaction.message.channel.send("No audio data was captured.")
-
-    async def check_and_handle_connection_issues(
-        self,
-        ctx_or_channel: Optional[Union[commands.Context, discord.TextChannel]] = None,
-    ) -> bool:
-        """
-        Checks critical connections and transitions to CONNECTION_ERROR state if issues are found.
-        """
-        current_bot_state = self.bot_state.current_state
-        if current_bot_state == BotStateEnum.IDLE:
-            return False
-
-        issue_detected = False
-        issue_description = ""
-
-        if current_bot_state in [BotStateEnum.STANDBY, BotStateEnum.RECORDING]:
-            if not self.voice_connection.is_connected():
-                issue_detected = True
-                issue_description = "Voice connection lost."
-                logger.warning(
-                    f"Connection check (guild {self.guild_id}): Voice connection found to be inactive."
-                )
-
-        if not issue_detected and not self.ai_coordinator.is_connected():
-            if current_bot_state != BotStateEnum.CONNECTION_ERROR:
-                issue_detected = True
-                issue_description = "AI service connection lost."
-                logger.warning(
-                    f"Connection check (guild {self.guild_id}): AI service connection found to be inactive."
-                )
-
-        if issue_detected:
-            logger.info(
-                f"Connection issue detected for guild {self.guild_id}: {issue_description}. Transitioning to CONNECTION_ERROR."
-            )
-            state_changed = await self.bot_state.enter_connection_error_state()
-            if state_changed:
-                self.ui_manager.schedule_update()
-            if state_changed and ctx_or_channel:
-                try:
-                    target_channel = (
-                        ctx_or_channel
-                        if isinstance(ctx_or_channel, discord.TextChannel)
-                        else ctx_or_channel.channel
-                    )
-                    await target_channel.send(
-                        f"Critical error: {issue_description} Bot functionality may be limited. Current state: {self.bot_state.current_state.value}"
-                    )
-                except discord.DiscordException as e:
-                    logger.error(
-                        f"Failed to send connection error message for guild {self.guild_id}: {e}"
-                    )
-            return True
-
-        return False
 
     async def _process_and_send_audio_task(
         self, pcm_data: bytes, channel: discord.TextChannel

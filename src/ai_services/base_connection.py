@@ -33,6 +33,8 @@ class BaseConnectionHandler(ABC):
         self._shutdown_signal = asyncio.Event()
         self._is_attempting_connection: bool = False
         self._event_callback: Optional[Callable[[Any], Awaitable[None]]] = None
+        self._on_connect_callback: Optional[Callable[[], Awaitable[None]]] = None
+        self._on_disconnect_callback: Optional[Callable[[], Awaitable[None]]] = None
 
         self._retry_delay = 1.0
         self._max_retry_delay = 30.0
@@ -52,12 +54,19 @@ class BaseConnectionHandler(ABC):
         """
         pass
 
-    async def connect(self, event_callback: Callable[[Any], Awaitable[None]]) -> None:
+    async def connect(
+        self,
+        event_callback: Callable[[Any], Awaitable[None]],
+        on_connect: Callable[[], Awaitable[None]],
+        on_disconnect: Callable[[], Awaitable[None]],
+    ) -> None:
         """
         Establishes the connection and starts the event processing loop.
 
         Args:
             event_callback: An async callable to be invoked with each event.
+            on_connect: An async callable to be invoked on successful connection.
+            on_disconnect: An async callable to be invoked on disconnection.
 
         Returns:
             None.
@@ -73,6 +82,8 @@ class BaseConnectionHandler(ABC):
         self._is_attempting_connection = True
         self._shutdown_signal.clear()
         self._event_callback = event_callback
+        self._on_connect_callback = on_connect
+        self._on_disconnect_callback = on_disconnect
 
         # This wrapper ensures that `_is_attempting_connection` is reset
         # even if the `_run_event_loop` task is cancelled or fails.
@@ -93,6 +104,7 @@ class BaseConnectionHandler(ABC):
 
         while not self._shutdown_signal.is_set():
             try:
+                # Subclasses must call self._on_connect_callback after connection.
                 await self._connection_logic()
                 logger.info(
                     f"{class_name}: Event stream ended. Connection likely closed by server."
@@ -102,6 +114,10 @@ class BaseConnectionHandler(ABC):
                     f"{class_name} connection error: {e}. Will attempt to reconnect.",
                     exc_info=True,
                 )
+            finally:
+                if self.is_connected() and self._on_disconnect_callback:
+                    asyncio.create_task(self._on_disconnect_callback())
+                self._connected_event.clear()
 
             if self._shutdown_signal.is_set():
                 logger.info(

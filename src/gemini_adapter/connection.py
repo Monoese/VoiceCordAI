@@ -62,6 +62,8 @@ class GeminiRealtimeConnection(BaseConnectionHandler):
             ) as session:
                 self._session_object = session
                 self._connected_event.set()
+                if self._on_connect_callback:
+                    await self._on_connect_callback()
                 logger.info(
                     "Successfully connected to Gemini Live API. Resetting retry delay."
                 )

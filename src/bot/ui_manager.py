@@ -8,7 +8,7 @@ from typing import Optional
 import discord
 
 from src.config.config import Config
-from src.state.state import BotState, BotStateEnum
+from src.state.state import BotState, BotStateEnum, StateChangedEvent
 from src.utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -23,6 +23,11 @@ class SessionUIManager:
         self.standby_message: Optional[discord.Message] = None
         self._update_queue: asyncio.Queue[None] = asyncio.Queue()
         self._updater_task: Optional[asyncio.Task[None]] = None
+        self.bot_state.subscribe_to_state_changes(self._on_state_change)
+
+    async def _on_state_change(self, event: StateChangedEvent) -> None:
+        """Callback for when bot state changes, which schedules a UI update."""
+        self.schedule_update()
 
     def get_message_content(self) -> str:
         """Generate the standby message content based on the current state."""

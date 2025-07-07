@@ -7,7 +7,7 @@ managing the lifecycle and interactions with the AI service providers.
 
 from __future__ import annotations
 
-from typing import Dict, Optional, Tuple
+from typing import Awaitable, Callable, Dict, Optional, Tuple
 
 from discord.ext import commands
 
@@ -92,7 +92,12 @@ class AIServiceCoordinator:
             logger.info(f"Disconnected from {provider_name} for guild {self.guild_id}.")
         self.active_ai_service_manager = None
 
-    async def ensure_connected(self, ctx: commands.Context) -> bool:
+    async def ensure_connected(
+        self,
+        ctx: commands.Context,
+        on_connect: Callable[[], Awaitable[None]],
+        on_disconnect: Callable[[], Awaitable[None]],
+    ) -> bool:
         """Ensures the AI service is initialized and connected, creating it if necessary."""
         if not self.is_connected():
             if not self.active_ai_service_manager:
@@ -100,7 +105,9 @@ class AIServiceCoordinator:
                 if not await self._create_and_set_manager(default_provider, ctx):
                     return False
 
-            if not await self.active_ai_service_manager.connect():
+            if not await self.active_ai_service_manager.connect(
+                on_connect=on_connect, on_disconnect=on_disconnect
+            ):
                 await ctx.send(
                     "Failed to connect to the AI service. Please try again later."
                 )
@@ -109,7 +116,12 @@ class AIServiceCoordinator:
         return True
 
     async def switch_provider(
-        self, provider_name: str, ctx: commands.Context, is_voice_connected: bool
+        self,
+        provider_name: str,
+        ctx: commands.Context,
+        is_voice_connected: bool,
+        on_connect: Callable[[], Awaitable[None]],
+        on_disconnect: Callable[[], Awaitable[None]],
     ) -> bool:
         """Handles the logic of switching the AI provider."""
         if (
@@ -120,7 +132,7 @@ class AIServiceCoordinator:
             return True
 
         new_manager = await self._validate_new_provider(
-            provider_name, ctx, is_voice_connected
+            provider_name, ctx, is_voice_connected, on_connect, on_disconnect
         )
         if not new_manager:
             return False
@@ -159,7 +171,12 @@ class AIServiceCoordinator:
             return False
 
     async def _validate_new_provider(
-        self, provider_name: str, ctx: commands.Context, is_voice_connected: bool
+        self,
+        provider_name: str,
+        ctx: commands.Context,
+        is_voice_connected: bool,
+        on_connect: Callable[[], Awaitable[None]],
+        on_disconnect: Callable[[], Awaitable[None]],
     ) -> Optional[IRealtimeAIServiceManager]:
         """Validates a new provider by attempting to create and connect it."""
         manager_class, service_config = self.ai_service_factories[provider_name]
@@ -180,7 +197,9 @@ class AIServiceCoordinator:
             return None
 
         if is_voice_connected:
-            if not await new_manager.connect():
+            if not await new_manager.connect(
+                on_connect=on_connect, on_disconnect=on_disconnect
+            ):
                 await ctx.send(
                     f"Failed to connect to '{provider_name.upper()}'. Switch aborted."
                 )

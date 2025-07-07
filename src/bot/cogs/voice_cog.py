@@ -78,6 +78,28 @@ class VoiceCog(commands.Cog):
         logger.info("All active sessions cleaned up.")
 
     @commands.Cog.listener()
+    async def on_voice_state_update(
+        self,
+        member: discord.Member,
+        before: discord.VoiceState,
+        after: discord.VoiceState,
+    ) -> None:
+        """Listen for bot's own voice connection changes."""
+        if member.id != self.bot.user.id or not member.guild:
+            return
+
+        # Don't trigger on mute/deafen events
+        if before.channel == after.channel:
+            return
+
+        session = self._sessions.get(member.guild.id)
+        if not session:
+            return
+
+        is_connected = after.channel is not None
+        await session.handle_voice_connection_update(is_connected)
+
+    @commands.Cog.listener()
     async def on_reaction_add(
         self, reaction: discord.Reaction, user: discord.User
     ) -> None:

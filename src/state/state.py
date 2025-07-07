@@ -12,14 +12,23 @@ prevents conflicting operations from occurring simultaneously.
 """
 
 import asyncio
+from dataclasses import dataclass
 from enum import Enum
-from typing import Optional
+from typing import Optional, List, Callable, Awaitable
 
 import discord
 from src.config.config import Config
 from src.utils.logger import get_logger
 
 logger = get_logger(__name__)
+
+
+@dataclass
+class StateChangedEvent:
+    """Event fired when the bot's state changes."""
+
+    old_state: "BotStateEnum"
+    new_state: "BotStateEnum"
 
 
 class BotStateEnum(Enum):
@@ -64,6 +73,7 @@ class BotState:
         self._active_ai_provider_name: str = (
             Config.AI_SERVICE_PROVIDER
         )  # Initialize with default
+        self._listeners: List[Callable[[StateChangedEvent], Awaitable[None]]] = []
 
     @property
     def current_state(self) -> BotStateEnum:
@@ -102,6 +112,26 @@ class BotState:
         """
         return self._authority_user_name
 
+    def subscribe_to_state_changes(
+        self, callback: Callable[[StateChangedEvent], Awaitable[None]]
+    ) -> None:
+        """Subscribe a listener to be called on state changes."""
+        self._listeners.append(callback)
+
+    async def _set_state(self, new_state: BotStateEnum) -> bool:
+        """Atomically sets a new state and notifies listeners."""
+        if self._current_state == new_state:
+            return False
+
+        old_state = self._current_state
+        self._current_state = new_state
+
+        event = StateChangedEvent(old_state=old_state, new_state=new_state)
+        for listener in self._listeners:
+            asyncio.create_task(listener(event))
+
+        return True
+
     async def set_active_ai_provider_name(self, provider_name: str) -> None:
         """
         Set the name of the active AI service provider.
@@ -134,8 +164,7 @@ class BotState:
                 # Only allow transition from IDLE state to prevent unexpected state changes.
                 return False
 
-            self._current_state = BotStateEnum.STANDBY
-            return True
+            return await self._set_state(BotStateEnum.STANDBY)
 
     async def start_recording(self, user: discord.User) -> bool:
         """
@@ -156,12 +185,12 @@ class BotState:
                 # Only allow transition from STANDBY state.
                 return False
 
-            self._current_state = BotStateEnum.RECORDING
-            self._set_authority(
-                user
-            )  # Assign control to the user who started recording
-
-            return True
+            if await self._set_state(BotStateEnum.RECORDING):
+                self._set_authority(
+                    user
+                )  # Assign control to the user who started recording
+                return True
+            return False
 
     async def stop_recording(self) -> bool:
         """
@@ -179,10 +208,10 @@ class BotState:
                 # Only allow transition from RECORDING state.
                 return False
 
-            self._current_state = BotStateEnum.STANDBY
-            self._reset_authority()  # Release specific user control
-
-            return True
+            if await self._set_state(BotStateEnum.STANDBY):
+                self._reset_authority()  # Release specific user control
+                return True
+            return False
 
     async def reset_to_idle(self) -> bool:
         """
@@ -200,10 +229,10 @@ class BotState:
                 # Already idle, no action needed.
                 return False
 
-            self._current_state = BotStateEnum.IDLE
-            self._reset_authority()  # Reset authority
-            # No UI message to update in IDLE state.
-        return True
+            if await self._set_state(BotStateEnum.IDLE):
+                self._reset_authority()  # Reset authority
+                return True
+            return False
 
     def is_authorized(self, user: discord.User) -> bool:
         """
@@ -237,10 +266,10 @@ class BotState:
             if self._current_state == BotStateEnum.CONNECTION_ERROR:
                 return False  # Already in the error state
 
-            self._current_state = BotStateEnum.CONNECTION_ERROR
-            self._reset_authority()  # Reset authority
-
-            return True
+            if await self._set_state(BotStateEnum.CONNECTION_ERROR):
+                self._reset_authority()  # Reset authority
+                return True
+            return False
 
     async def recover_to_standby(self) -> bool:
         """
@@ -256,6 +285,7 @@ class BotState:
             if self._current_state != BotStateEnum.CONNECTION_ERROR:
                 return False  # Can only recover from connection error state
 
-            self._current_state = BotStateEnum.STANDBY
-            self._reset_authority()
-            return True
+            if await self._set_state(BotStateEnum.STANDBY):
+                self._reset_authority()
+                return True
+            return False

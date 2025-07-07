@@ -7,7 +7,7 @@ through a common set of methods.
 """
 
 from abc import ABC, abstractmethod
-from typing import Any, Dict, Tuple
+from typing import Any, Dict, Tuple, Callable, Awaitable
 from src.audio.playback import AudioPlaybackManager
 
 
@@ -82,13 +82,21 @@ class IRealtimeAIServiceManager(ABC):
         return self._response_audio_format
 
     @abstractmethod
-    async def connect(self) -> bool:
+    async def connect(
+        self,
+        on_connect: Callable[[], Awaitable[None]],
+        on_disconnect: Callable[[], Awaitable[None]],
+    ) -> bool:
         """
         Establishes a connection to the real-time AI service and initializes the session.
 
         Implementations should handle all necessary setup, including authentication
         and sending any initial configuration or session parameters derived from
         `self._service_config`.
+
+        Args:
+            on_connect: An async callback to be invoked upon successful connection.
+            on_disconnect: An async callback to be invoked upon disconnection.
 
         Returns:
             True if the connection and session setup were successful, False otherwise.

@@ -54,6 +54,8 @@ class OpenAIRealtimeConnection(BaseConnectionHandler):
             async with self.client.beta.realtime.connect(model=self.model_name) as conn:
                 self._connection_object = conn
                 self._connected_event.set()
+                if self._on_connect_callback:
+                    await self._on_connect_callback()
                 logger.info(
                     "Successfully connected to OpenAI Realtime API. Resetting retry delay."
                 )

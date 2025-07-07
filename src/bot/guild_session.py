@@ -10,15 +10,14 @@ state conflicts.
 from typing import Dict
 
 import discord
-from discord.ext import commands, tasks
+from discord.ext import commands
 
 from src.audio.playback import AudioPlaybackManager
 from src.bot.ai_service_coordinator import AIServiceCoordinator
 from src.bot.interaction_handler import InteractionHandler
 from src.bot.ui_manager import SessionUIManager
 from src.bot.voice_connection import VoiceConnectionManager
-from src.config.config import Config
-from src.state.state import BotState, BotStateEnum
+from src.state.state import BotState
 from src.utils.logger import get_logger
 
 
@@ -72,11 +71,11 @@ class GuildSession:
             voice_connection=self.voice_connection,
             ai_coordinator=self.ai_coordinator,
         )
+        self._is_ai_connected = False
 
     async def start_background_tasks(self) -> None:
         """Starts all persistent background tasks for the session."""
         self.ui_manager.start()
-        self._connection_check_loop.start()
         logger.info(f"Background tasks started for guild {self.guild.id}.")
 
     async def cleanup(self) -> None:
@@ -84,7 +83,6 @@ class GuildSession:
         Gracefully shuts down the session, ensuring each cleanup step is attempted.
         """
         logger.info(f"Cleaning up session for guild {self.guild.id}")
-        self._connection_check_loop.cancel()
         await self.ui_manager.cleanup()
         await self.interaction_handler.cleanup()
 
@@ -124,6 +122,31 @@ class GuildSession:
         """
         await self.interaction_handler.handle_reaction_remove(reaction, user)
 
+    async def _on_ai_connect(self) -> None:
+        """Callback for when the AI service connects."""
+        logger.info(f"AI service connected for guild {self.guild.id}.")
+        self._is_ai_connected = True
+        # If both connections are now healthy, attempt to recover.
+        if self.voice_connection.is_connected():
+            await self.bot_state.recover_to_standby()
+
+    async def _on_ai_disconnect(self) -> None:
+        """Callback for when the AI service disconnects."""
+        logger.warning(f"AI service disconnected for guild {self.guild.id}.")
+        self._is_ai_connected = False
+        await self.bot_state.enter_connection_error_state()
+
+    async def handle_voice_connection_update(self, is_connected: bool) -> None:
+        """Handler called by VoiceCog on voice state changes."""
+        if is_connected and self._is_ai_connected:
+            logger.info(
+                f"Voice connection active for guild {self.guild.id}, recovering if needed."
+            )
+            await self.bot_state.recover_to_standby()
+        elif not is_connected:
+            logger.warning(f"Voice connection lost for guild {self.guild.id}.")
+            await self.bot_state.enter_connection_error_state()
+
     async def connect(self, ctx: commands.Context) -> bool:
         """
         Handles the logic of the 'connect' command.
@@ -132,14 +155,15 @@ class GuildSession:
             await ctx.send("You are not connected to a voice channel.")
             return False
 
-        if not await self.ai_coordinator.ensure_connected(ctx):
+        if not await self.ai_coordinator.ensure_connected(
+            ctx, on_connect=self._on_ai_connect, on_disconnect=self._on_ai_disconnect
+        ):
             return False
 
         voice_channel = ctx.author.voice.channel
         if not await self.voice_connection.connect_to_channel(voice_channel):
             await ctx.send("Failed to connect to the voice channel.")
-            if await self.bot_state.enter_connection_error_state():
-                self.ui_manager.schedule_update()
+            await self.bot_state.enter_connection_error_state()
             return False
 
         if not await self.bot_state.transition_to_standby():
@@ -168,43 +192,12 @@ class GuildSession:
             return
 
         if await self.ai_coordinator.switch_provider(
-            provider_name, ctx, self.voice_connection.is_connected()
+            provider_name,
+            ctx,
+            self.voice_connection.is_connected(),
+            on_connect=self._on_ai_connect,
+            on_disconnect=self._on_ai_disconnect,
         ):
-            self.ui_manager.schedule_update()
             await ctx.send(f"AI provider switched to '{provider_name.upper()}'.")
 
-            if self.bot_state.current_state == BotStateEnum.CONNECTION_ERROR:
-                if await self.bot_state.recover_to_standby():
-                    self.ui_manager.schedule_update()
-
-    @tasks.loop(seconds=Config.CONNECTION_CHECK_INTERVAL)
-    async def _connection_check_loop(self) -> None:
-        """Periodically checks the health of critical connections."""
-        if self.bot_state.current_state not in [
-            BotStateEnum.STANDBY,
-            BotStateEnum.RECORDING,
-            BotStateEnum.CONNECTION_ERROR,
-        ]:
-            return
-
-        channel_for_message = None
-        if self.ui_manager.standby_message:
-            channel_for_message = self.ui_manager.standby_message.channel
-
-        if self.bot_state.current_state == BotStateEnum.CONNECTION_ERROR:
-            if (
-                self.voice_connection.is_connected()
-                and self.ai_coordinator.is_connected()
-            ):
-                if await self.bot_state.recover_to_standby():
-                    self.ui_manager.schedule_update()
-                    return
-
-        await self.interaction_handler.check_and_handle_connection_issues(
-            channel_for_message
-        )
-
-    @_connection_check_loop.before_loop
-    async def before_connection_check_loop(self) -> None:
-        """Waits for the bot to be ready before starting the connection check loop."""
-        await self.bot.wait_until_ready()
+            # Recovery is now handled automatically by the on_connect callback.
