@@ -71,7 +71,6 @@ class GuildSession:
             voice_connection=self.voice_connection,
             ai_coordinator=self.ai_coordinator,
         )
-        self._is_ai_connected = False
 
     async def start_background_tasks(self) -> None:
         """Starts all persistent background tasks for the session."""
@@ -125,25 +124,30 @@ class GuildSession:
     async def _on_ai_connect(self) -> None:
         """Callback for when the AI service connects."""
         logger.info(f"AI service connected for guild {self.guild.id}.")
-        self._is_ai_connected = True
-        # If both connections are now healthy, attempt to recover.
+        # If the voice connection is also active, attempt to recover the bot's state.
         if self.voice_connection.is_connected():
             await self.bot_state.recover_to_standby()
 
     async def _on_ai_disconnect(self) -> None:
         """Callback for when the AI service disconnects."""
         logger.warning(f"AI service disconnected for guild {self.guild.id}.")
-        self._is_ai_connected = False
         await self.bot_state.enter_connection_error_state()
 
     async def handle_voice_connection_update(self, is_connected: bool) -> None:
-        """Handler called by VoiceCog on voice state changes."""
-        if is_connected and self._is_ai_connected:
+        """
+        Handler called by VoiceCog on voice state changes.
+
+        This method decides whether to recover the bot to a healthy state or enter
+        an error state based on the status of both the voice and AI connections.
+        """
+        # Query the coordinator directly to get the authoritative AI connection status.
+        if is_connected and self.ai_coordinator.is_connected():
             logger.info(
                 f"Voice connection active for guild {self.guild.id}, recovering if needed."
             )
             await self.bot_state.recover_to_standby()
         elif not is_connected:
+            # If the voice connection is lost, always enter an error state.
             logger.warning(f"Voice connection lost for guild {self.guild.id}.")
             await self.bot_state.enter_connection_error_state()
 
