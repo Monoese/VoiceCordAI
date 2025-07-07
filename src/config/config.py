@@ -57,6 +57,7 @@ class Config:
     # --- UI/UX Settings ---
     REACTION_START_RECORDING: str = os.getenv("REACTION_START_RECORDING", "🎙")
     REACTION_CANCEL_RECORDING: str = os.getenv("REACTION_CANCEL_RECORDING", "❌")
+    REACTION_GRANT_CONSENT: str = os.getenv("REACTION_GRANT_CONSENT", "✋")
 
     # --- Audio Processing Settings ---
     # General Audio

@@ -52,10 +52,11 @@ class SessionUIManager:
                 f"**🎙 Voice Chat Session - **\n\n"
                 f"---\n"
                 f"### 🔄 How to control the bot:\n"
-                f"1. **Start Recording**: React to this message with {Config.REACTION_START_RECORDING} to start recording.\n"
+                f"1. **Start Recording**: React with {Config.REACTION_START_RECORDING} to start recording.\n"
                 f"2. **Finish Recording**: Remove your {Config.REACTION_START_RECORDING} reaction to finish recording.\n"
-                f"3. **End Session**: Use `{Config.COMMAND_PREFIX}disconnect` to end the session.\n"
-                f"4. **Switch AI**: Use `{Config.COMMAND_PREFIX}set <name>` (e.g., openai, gemini).\n"
+                f"3. **Give Consent**: React with {Config.REACTION_GRANT_CONSENT} to allow your voice to be recorded in sessions started by others.\n"
+                f"4. **End Session**: Use `{Config.COMMAND_PREFIX}disconnect` to end the session.\n"
+                f"5. **Switch AI**: Use `{Config.COMMAND_PREFIX}set <name>` (e.g., openai, gemini).\n"
                 f"---\n"
                 f"### 🛠 Current State:\n"
                 f"- **State**: `{current_state.value}`"
@@ -133,6 +134,7 @@ class SessionUIManager:
         try:
             self.standby_message = await channel.send(self.get_message_content())
             await self.standby_message.add_reaction(Config.REACTION_START_RECORDING)
+            await self.standby_message.add_reaction(Config.REACTION_GRANT_CONSENT)
             return True
         except discord.DiscordException as e:
             logger.error(

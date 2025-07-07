@@ -13,6 +13,7 @@ from discord.ext import voice_recv
 
 from src.audio.playback import AudioPlaybackManager
 from src.audio.recorder import create_sink
+from src.bot.state import BotState
 from src.utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -116,9 +117,12 @@ class VoiceConnectionManager:
             logger.error(f"Error disconnecting from voice channel: {e}", exc_info=True)
             return False
 
-    def start_listening(self) -> bool:
+    def start_listening(self, bot_state: BotState) -> bool:
         """
         Start listening for audio from the voice channel by activating the sink.
+
+        Args:
+            bot_state: The state manager instance for accessing consent info.
 
         Returns:
             bool: True if listening started successfully, False otherwise.
@@ -129,7 +133,7 @@ class VoiceConnectionManager:
             return False
 
         try:
-            sink = create_sink()
+            sink = create_sink(bot_state=bot_state)
             voice_client.listen(sink)
             logger.info("Started listening with new audio sink.")
             return True

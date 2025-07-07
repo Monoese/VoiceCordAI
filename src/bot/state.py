@@ -14,7 +14,7 @@ prevents conflicting operations from occurring simultaneously.
 import asyncio
 from dataclasses import dataclass
 from enum import Enum
-from typing import List, Callable, Awaitable, Union
+from typing import List, Callable, Awaitable, Union, Set
 
 import discord
 from src.config.config import Config
@@ -82,6 +82,7 @@ class BotState:
         self._authority_user_name: str = "anyone"
         self._active_ai_provider_name: str = Config.AI_SERVICE_PROVIDER
         self._listeners: List[Callable[[StateEvent], Awaitable[None]]] = []
+        self._consented_user_ids: Set[int] = set()
 
     @property
     def current_state(self) -> BotStateEnum:
@@ -120,6 +121,10 @@ class BotState:
         """
         return self._authority_user_name
 
+    def get_consented_user_ids(self) -> Set[int]:
+        """Get a copy of the set of user IDs who have consented to be recorded."""
+        return self._consented_user_ids.copy()
+
     def subscribe_to_state_changes(
         self, callback: Callable[[StateEvent], Awaitable[None]]
     ) -> None:
@@ -143,6 +148,16 @@ class BotState:
         await self._notify_listeners(event)
 
         return True
+
+    async def grant_consent(self, user_id: int) -> None:
+        """Adds a user's ID to the consent list."""
+        async with self._lock:
+            self._consented_user_ids.add(user_id)
+
+    async def revoke_consent(self, user_id: int) -> None:
+        """Removes a user's ID from the consent list."""
+        async with self._lock:
+            self._consented_user_ids.discard(user_id)
 
     async def set_active_ai_provider_name(self, provider_name: str) -> None:
         """
@@ -187,7 +202,7 @@ class BotState:
             if self._current_state != BotStateEnum.IDLE:
                 # Only allow transition from IDLE state to prevent unexpected state changes.
                 return False
-
+            self._consented_user_ids.clear()
             return await self._set_state(BotStateEnum.STANDBY)
 
     async def start_recording(self, user: discord.User) -> bool:
@@ -253,6 +268,7 @@ class BotState:
                 # Already idle, no action needed.
                 return False
 
+            self._consented_user_ids.clear()
             if await self._set_state(BotStateEnum.IDLE):
                 self._reset_authority()  # Reset authority
                 return True

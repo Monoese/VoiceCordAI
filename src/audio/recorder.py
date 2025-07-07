@@ -3,19 +3,71 @@ from typing import Any
 from discord import User
 from discord.ext import voice_recv
 
+from src.bot.state import BotState
 from src.utils.logger import get_logger
 
 logger = get_logger(__name__)
 
 
-class AudioSink(voice_recv.AudioSink):
+class ConsentFilterSink(voice_recv.AudioSink):
     """
-    Custom audio sink that captures PCM audio data from Discord voice channels.
+    A sink that filters audio packets based on user consent and authority.
 
-    This sink:
-    - Captures raw PCM audio data from users in voice channels
-    - Accumulates the data in a bytearray for later processing
-    - Tracks the total amount of data captured for debugging
+    This sink acts as a filter in a sink chain. It inspects each audio packet
+    and passes it to its destination sink only if the originating user is either
+    the session authority or has explicitly granted consent.
+    """
+
+    def __init__(self, destination: "BufferingSink", bot_state: BotState):
+        """
+        Initialize the consent filter.
+
+        Args:
+            destination: The next sink in the chain to receive filtered data.
+            bot_state: The BotState object providing consent information.
+        """
+        super().__init__(destination)
+        self.destination: "BufferingSink" = destination
+        self._bot_state = bot_state
+
+    @property
+    def audio_data(self) -> bytearray:
+        """Provides access to the buffered audio data from the destination sink."""
+        return self.destination.audio_data
+
+    def wants_opus(self) -> bool:
+        """Delegates the audio format preference to the destination sink."""
+        return self.destination.wants_opus()
+
+    def write(self, user: User, data: Any) -> None:
+        """
+        Processes and filters an incoming audio packet.
+
+        The packet is passed to the destination sink if the user is authorized.
+        """
+        if not user:
+            return
+
+        authority_user_id = self._bot_state.authority_user_id
+        is_authority = user.id == authority_user_id
+
+        consented_user_ids = self._bot_state.get_consented_user_ids()
+        is_consented = user.id in consented_user_ids
+
+        if is_authority or is_consented:
+            self.destination.write(user, data)
+
+    def cleanup(self) -> None:
+        """Clean up resources. This sink owns no resources, so it does nothing."""
+        pass
+
+
+class BufferingSink(voice_recv.AudioSink):
+    """
+    A sink that buffers incoming PCM audio data into a bytearray.
+
+    This sink's sole responsibility is to accumulate audio data that it receives.
+    It does not perform any filtering.
     """
 
     def __init__(self) -> None:
@@ -51,7 +103,7 @@ class AudioSink(voice_recv.AudioSink):
             self.audio_data.extend(data.pcm)
             self.total_bytes += len(data.pcm)
             logger.debug(
-                f"AudioSink.write: Adding {len(data.pcm)} bytes. Total accumulated: {self.total_bytes} bytes"
+                f"BufferingSink.write: Adding {len(data.pcm)} bytes. Total accumulated: {self.total_bytes} bytes"
             )
         else:
             logger.warning("Write called with no PCM data")
@@ -69,14 +121,19 @@ class AudioSink(voice_recv.AudioSink):
         self.audio_data.clear()
 
 
-def create_sink() -> AudioSink:
+def create_sink(bot_state: BotState) -> ConsentFilterSink:
     """
-    Create a new audio sink instance for capturing voice data.
+    Create a new audio sink chain for consent-based recording.
 
-    This method instantiates a fresh AudioSink that can be attached to a
-    Discord voice client to capture audio from users in a voice channel.
+    This factory function constructs a sink chain consisting of:
+    1. A ConsentFilterSink that performs the filtering logic.
+    2. A BufferingSink that stores the audio data that passes the filter.
+
+    Args:
+        bot_state: The BotState object providing access to consent information.
 
     Returns:
-        AudioSink: A new audio sink instance ready to capture audio
+        ConsentFilterSink: The head of the sink chain, ready to be used by the voice client.
     """
-    return AudioSink()
+    buffering_sink = BufferingSink()
+    return ConsentFilterSink(destination=buffering_sink, bot_state=bot_state)

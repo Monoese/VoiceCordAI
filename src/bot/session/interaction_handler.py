@@ -57,7 +57,12 @@ class InteractionHandler:
     async def _handle_start_recording_reaction(
         self, reaction: discord.Reaction, user: discord.User
     ) -> None:
-        """Handles the start recording reaction."""
+        """Handles the start recording reaction by transitioning state and starting the listener.
+
+        This method manages the full sequence to begin recording: stopping any current
+        playback, canceling AI responses, transitioning the bot to the RECORDING state,
+        and starting the audio listener with the session's state for consent filtering.
+        """
         guild = self.bot.get_guild(self.guild_id)
         if not guild:
             return
@@ -79,7 +84,7 @@ class InteractionHandler:
             )
             return
 
-        if not self.voice_connection.start_listening():
+        if not self.voice_connection.start_listening(bot_state=self.bot_state):
             logger.error(
                 f"Failed to start listening for user {user.name} in guild {self.guild_id}. Rolling back state."
             )
@@ -221,6 +226,9 @@ class InteractionHandler:
             ):
                 await self._handle_cancel_recording_reaction(reaction, user)
 
+            elif reaction.emoji == Config.REACTION_GRANT_CONSENT:
+                await self.bot_state.grant_consent(user.id)
+
     async def handle_reaction_remove(
         self, reaction: discord.Reaction, user: discord.User
     ) -> None:
@@ -229,15 +237,16 @@ class InteractionHandler:
         """
         async with self._action_lock:
             message_id = self.ui_manager.get_message_id()
-            is_valid_reaction_remove = (
-                user != self.bot.user
-                and message_id
-                and reaction.message.id == message_id
-                and reaction.emoji == Config.REACTION_START_RECORDING
-                and self.bot_state.current_state == BotStateEnum.RECORDING
-                and self.bot_state.is_authorized(user)
-            )
-            if not is_valid_reaction_remove:
+            if user == self.bot.user or not (
+                message_id and reaction.message.id == message_id
+            ):
                 return
 
-            await self._handle_stop_recording_reaction(reaction)
+            if (
+                reaction.emoji == Config.REACTION_START_RECORDING
+                and self.bot_state.current_state == BotStateEnum.RECORDING
+                and self.bot_state.is_authorized(user)
+            ):
+                await self._handle_stop_recording_reaction(reaction)
+            elif reaction.emoji == Config.REACTION_GRANT_CONSENT:
+                await self.bot_state.revoke_consent(user.id)

@@ -120,11 +120,12 @@ python main.py
 
 ### Voice Controls
 
-After using `/connect`, the bot posts a status message. Use reactions on that message to control it. The 🎙️ reaction acts like a push-to-talk button.
+After using `/connect`, the bot posts a status message. Use reactions on that message to control it.
 
-- **Add 🎙️ Reaction:** Start recording your voice.
+- **Add 🎙️ Reaction:** Start recording your voice. This makes you the session leader.
 - **Remove 🎙️ Reaction:** Stop recording and send your audio to the AI.
-- **Add ❌ Reaction:** Cancel the current recording and discard the audio.
+- **Add ✋ Reaction:** Give consent for your voice to be recorded in sessions started by other users.
+- **Add ❌ Reaction:** Cancel the current recording and discard the audio (only works if you are the session leader).
 
 ## Troubleshooting
 
