@@ -4,11 +4,10 @@ A Discord bot that enables real-time voice conversations between users and vario
 
 ## Features
 
-- Talk with AI (OpenAI GPT-4, Google Gemini) in real-time using your voice.
-- Switch between different AI service providers.
-- Works directly in Discord voice channels.
-- Easy to control using emoji reactions, which mimics a push-to-talk button.
-- Includes error handling and activity logging.
+- Real-time voice conversations with AI in Discord voice channels.
+- Support for multiple providers (OpenAI GPT-4, Google Gemini).
+- Simple, reaction-based controls for push-to-talk style interaction.
+- Switch between AI providers on-the-fly with a command.
 
 ## Getting Started
 
@@ -19,7 +18,10 @@ Follow these steps to set up and run the bot on your local machine or a virtual 
 Before you begin, ensure you have the following software installed:
 
 - **Python 3.8 or newer**
-- **FFmpeg** (e.g., `winget install -e --id Gyan.FFmpeg` on Windows)
+- **FFmpeg**:
+  - **Windows**: `winget install -e --id Gyan.FFmpeg`
+  - **macOS**: `brew install ffmpeg`
+  - **Debian/Ubuntu**: `sudo apt-get install ffmpeg`
 
 You will also need to gather API keys and set up your Discord bot.
 
@@ -27,9 +29,9 @@ You will also need to gather API keys and set up your Discord bot.
 
 1.  **Discord Bot Token:**
     - Go to the [Discord Developer Portal](https://discord.com/developers/applications) and create a "New Application".
-    - Go to the "Installation" tab and set the "Install Link" to "None".
+    - Go to the "Installation" tab and set the "Install Link" to "None". This ensures you will use a custom-generated invite URL with the correct permissions.
     - Navigate to the "Bot" tab, in "Token" section, click "Reset Token" to obtain a private token and keep it secured.
-    - Within "Bot" tab, Disable "Public Bot" option so that only you can join this bot to servers.
+    - Within "Bot" tab, disable the "Public Bot" option. This is a crucial security step to prevent others from inviting your bot to their servers.
     - Again, within "Bot" tab, enable "Message Content Intent".
     - **Invite the bot to your server:** 
       - Go to the "OAuth2" tab and go to the "OAuth2 URL Generator" section.
@@ -48,8 +50,6 @@ You will also need to gather API keys and set up your Discord bot.
 
 3.  **Google Gemini API Key:**
     - Obtain your key from [Google AI Studio](https://aistudio.google.com/app/apikey).
-
-*Note: The bot requires at least one API key (`OPENAI_API_KEY` or `GEMINI_API_KEY`) to function. You do not have to provide both.*
 
 ### 2. Installation and Configuration
 
@@ -116,15 +116,15 @@ python main.py
 |---|---|---|
 | `/connect` | Joins your voice channel and enters standby mode. | `/connect` |
 | `/disconnect` | Leaves the voice channel and resets the bot. | `/disconnect` |
-| `/set` | Sets the AI provider (`openai` or `gemini`). OpenAI is recommended. | `/set openai` |
+| `/set` | Sets the AI provider (`openai` or `gemini`). The OpenAI provider is currently recommended for stability. | `/set openai` |
 
 ### Voice Controls
 
-After using `/connect`, the bot posts a status message. Use reactions on that message to control it:
+After using `/connect`, the bot posts a status message. Use reactions on that message to control it. The 🎙️ reaction acts like a push-to-talk button.
 
-- **🎙️ Start Recording:** React to begin capturing your voice.
-- **🎙️ Stop Recording:** React again to stop and send your audio to the AI.
-- **❌ Cancel:** React to stop and discard the current recording.
+- **Add 🎙️ Reaction:** Start recording your voice.
+- **Remove 🎙️ Reaction:** Stop recording and send your audio to the AI.
+- **Add ❌ Reaction:** Cancel the current recording and discard the audio.
 
 ## Troubleshooting
 
