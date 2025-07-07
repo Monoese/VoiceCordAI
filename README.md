@@ -100,12 +100,12 @@ This project can be run locally or on a server/VM. With your virtual environment
 
 **On Windows:**
 ```bash
-py -m src.bot.main
+py main.py
 ```
 
 **On macOS/Linux:**
 ```bash
-python -m src.bot.main
+python main.py
 ```
 
 ## Usage
