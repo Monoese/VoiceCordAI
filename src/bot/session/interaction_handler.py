@@ -11,11 +11,11 @@ from discord.ext import commands
 from google.genai import errors as gemini_errors
 
 from src.audio.processor import process_recorded_audio
-from src.bot.ai_service_coordinator import AIServiceCoordinator
-from src.bot.ui_manager import SessionUIManager
-from src.bot.voice_connection import VoiceConnectionManager
+from src.bot.session.ai_service_coordinator import AIServiceCoordinator
+from src.bot.session.session_ui_manager import SessionUIManager
+from src.bot.session.voice_connection_manager import VoiceConnectionManager
 from src.config.config import Config
-from src.state.state import BotState, BotStateEnum
+from src.bot.state import BotState, BotStateEnum
 from src.utils.logger import get_logger
 
 logger = get_logger(__name__)

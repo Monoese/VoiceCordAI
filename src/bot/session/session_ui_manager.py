@@ -8,7 +8,7 @@ from typing import Optional
 import discord
 
 from src.config.config import Config
-from src.state.state import BotState, BotStateEnum, StateEvent
+from src.bot.state import BotState, BotStateEnum, StateEvent
 from src.utils.logger import get_logger
 
 logger = get_logger(__name__)

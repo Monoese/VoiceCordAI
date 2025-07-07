@@ -13,11 +13,11 @@ import discord
 from discord.ext import commands
 
 from src.audio.playback import AudioPlaybackManager
-from src.bot.ai_service_coordinator import AIServiceCoordinator
-from src.bot.interaction_handler import InteractionHandler
-from src.bot.ui_manager import SessionUIManager
-from src.bot.voice_connection import VoiceConnectionManager
-from src.state.state import BotState
+from src.bot.session.ai_service_coordinator import AIServiceCoordinator
+from src.bot.session.interaction_handler import InteractionHandler
+from src.bot.session.session_ui_manager import SessionUIManager
+from src.bot.session.voice_connection_manager import VoiceConnectionManager
+from src.bot.state import BotState
 from src.utils.logger import get_logger
 
 

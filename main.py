@@ -20,10 +20,10 @@ from src.config.config import Config
 from src.utils.logger import get_logger
 
 # Import managers and their configurations
-from src.openai_adapter.manager import OpenAIRealtimeManager
-from src.openai_adapter.config import OPENAI_SERVICE_CONFIG
-from src.gemini_adapter.manager import GeminiRealtimeManager
-from src.gemini_adapter.config import GEMINI_SERVICE_CONFIG
+from src.ai_services.providers.openai.manager import OpenAIRealtimeManager
+from src.ai_services.providers.openai.config import OPENAI_SERVICE_CONFIG
+from src.ai_services.providers.gemini.manager import GeminiRealtimeManager
+from src.ai_services.providers.gemini.config import GEMINI_SERVICE_CONFIG
 
 
 # Configure discord.py's internal logging.

@@ -14,7 +14,7 @@ from discord.ext import commands
 from src.ai_services.interface import IRealtimeAIServiceManager
 from src.audio.playback import AudioPlaybackManager
 from src.config.config import Config
-from src.state.state import BotState
+from src.bot.state import BotState
 from src.utils.logger import get_logger
 
 logger = get_logger(__name__)

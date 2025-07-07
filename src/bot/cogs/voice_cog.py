@@ -13,7 +13,7 @@ from typing import Dict
 import discord
 from discord.ext import commands
 
-from src.bot.guild_session import GuildSession
+from src.bot.session.guild_session import GuildSession
 from src.utils.logger import get_logger
 
 

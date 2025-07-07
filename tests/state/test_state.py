@@ -1,7 +1,7 @@
 import pytest
 from unittest.mock import AsyncMock, MagicMock
 
-from src.state.state import BotState, BotStateEnum
+from src.bot.state import BotState, BotStateEnum
 
 
 @pytest.fixture
