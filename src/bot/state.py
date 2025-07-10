@@ -52,11 +52,13 @@ class BotStateEnum(Enum):
     - STANDBY: Bot is ready to start recording when triggered.
     - RECORDING: Bot is actively recording audio from a user.
     - CONNECTION_ERROR: Bot has encountered a connection issue and may not be fully functional.
+    - DEBUG_RECORDING: Bot is actively recording audio for debug playback.
     """
 
     IDLE = "idle"
     STANDBY = "standby"
     RECORDING = "recording"
+    DEBUG_RECORDING = "debug_recording"
     CONNECTION_ERROR = "connection_error"
 
 
@@ -231,6 +233,29 @@ class BotState:
                 return True
             return False
 
+    async def start_debug_recording(self, user: discord.User) -> bool:
+        """
+        Transition from standby to debug recording state.
+
+        This method:
+        1. Transitions the bot from STANDBY to DEBUG_RECORDING state
+        2. Sets the authority user to the one who started recording
+
+        Args:
+            user: The Discord user who is starting the recording
+
+        Returns:
+            bool: True if transition was successful, False if bot was not in STANDBY state
+        """
+        async with self._lock:
+            if self._current_state != BotStateEnum.STANDBY:
+                return False
+
+            if await self._set_state(BotStateEnum.DEBUG_RECORDING):
+                self._set_authority(user)
+                return True
+            return False
+
     async def stop_recording(self) -> bool:
         """
         Stop recording and return to standby state.
@@ -249,6 +274,26 @@ class BotState:
 
             if await self._set_state(BotStateEnum.STANDBY):
                 self._reset_authority()  # Release specific user control
+                return True
+            return False
+
+    async def stop_debug_recording(self) -> bool:
+        """
+        Stop debug recording and return to standby state.
+
+        This method:
+        1. Transitions the bot from DEBUG_RECORDING back to STANDBY state
+        2. Resets the authority user to "anyone"
+
+        Returns:
+            bool: True if transition was successful, False if bot was not in DEBUG_RECORDING state
+        """
+        async with self._lock:
+            if self._current_state != BotStateEnum.DEBUG_RECORDING:
+                return False
+
+            if await self._set_state(BotStateEnum.STANDBY):
+                self._reset_authority()
                 return True
             return False
 
@@ -281,7 +326,7 @@ class BotState:
         This method determines whether a user has permission to control the bot,
         based on the current authority settings. A user is authorized if:
         - The authority is set to "anyone" (default in STANDBY state)
-        - The user's ID matches the current authority user ID (in RECORDING state)
+        - The user's ID matches the current authority user ID (in RECORDING or DEBUG_RECORDING state)
 
         Args:
             user: The Discord user to check for authorization

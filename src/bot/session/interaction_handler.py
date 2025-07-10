@@ -134,6 +134,28 @@ class InteractionHandler:
         else:
             await reaction.message.channel.send("No audio data was captured.")
 
+    async def _playback_recorded_audio_task(
+        self, pcm_data: bytes, channel: discord.TextChannel
+    ) -> None:
+        """A background task to play back recorded audio for debugging."""
+        await channel.send("Playing back recorded audio...")
+
+        playback_manager = self.voice_connection.audio_playback_manager
+        # Recorded audio format is the same as Discord's internal format
+        response_format = (
+            Config.DISCORD_AUDIO_FRAME_RATE,
+            Config.DISCORD_AUDIO_CHANNELS,
+        )
+
+        stream_id = f"debug_playback_{int(asyncio.get_running_loop().time())}"
+
+        await playback_manager.start_new_audio_stream(stream_id, response_format)
+        await playback_manager.add_audio_chunk(pcm_data)
+        await playback_manager.end_audio_stream(stream_id)
+        logger.info(
+            f"Debug playback started for {len(pcm_data)} bytes in guild {self.guild_id}."
+        )
+
     async def _process_and_send_audio_task(
         self, pcm_data: bytes, channel: discord.TextChannel
     ) -> None:
@@ -220,6 +242,13 @@ class InteractionHandler:
                 await self._handle_start_recording_reaction(reaction, user)
 
             elif (
+                reaction.emoji == Config.REACTION_DEBUG_RECORDING
+                and self.bot_state.current_state == BotStateEnum.STANDBY
+            ):
+                if await self.bot_state.start_debug_recording(user):
+                    self.voice_connection.start_listening(bot_state=self.bot_state)
+
+            elif (
                 reaction.emoji == Config.REACTION_CANCEL_RECORDING
                 and self.bot_state.current_state == BotStateEnum.RECORDING
                 and self.bot_state.is_authorized(user)
@@ -248,5 +277,26 @@ class InteractionHandler:
                 and self.bot_state.is_authorized(user)
             ):
                 await self._handle_stop_recording_reaction(reaction)
+
+            elif (
+                reaction.emoji == Config.REACTION_DEBUG_RECORDING
+                and self.bot_state.current_state == BotStateEnum.DEBUG_RECORDING
+                and self.bot_state.is_authorized(user)
+            ):
+                pcm_data = self.voice_connection.stop_listening()
+                await self.bot_state.stop_debug_recording()
+                if pcm_data:
+                    task = asyncio.create_task(
+                        self._playback_recorded_audio_task(
+                            pcm_data, reaction.message.channel
+                        )
+                    )
+                    self._background_tasks.add(task)
+                    task.add_done_callback(self._background_tasks.discard)
+                else:
+                    await reaction.message.channel.send(
+                        "No audio data was captured for debug playback."
+                    )
+
             elif reaction.emoji == Config.REACTION_GRANT_CONSENT:
                 await self.bot_state.revoke_consent(user.id)
