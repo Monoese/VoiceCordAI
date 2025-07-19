@@ -55,10 +55,16 @@ class Config:
     CHUNK_DURATION_MS: int = 500  # Duration of audio chunks in milliseconds
 
     # --- UI/UX Settings ---
-    REACTION_START_RECORDING: str = os.getenv("REACTION_START_RECORDING", "🎙")
-    REACTION_CANCEL_RECORDING: str = os.getenv("REACTION_CANCEL_RECORDING", "❌")
-    REACTION_GRANT_CONSENT: str = os.getenv("REACTION_GRANT_CONSENT", "✋")
-    REACTION_DEBUG_RECORDING: str = os.getenv("REACTION_DEBUG_RECORDING", "🐛")
+    REACTION_GRANT_CONSENT: str = os.getenv("REACTION_GRANT_CONSENT", "🙏")
+    REACTION_MODE_MANUAL: str = os.getenv("REACTION_MODE_MANUAL", "🙋")
+    REACTION_MODE_REALTIME: str = os.getenv("REACTION_MODE_REALTIME", "🗣️")
+    REACTION_TRIGGER_PTT: str = os.getenv("REACTION_TRIGGER_PTT", "🎙️")
+
+    # --- Audio Cue Paths ---
+    AUDIO_CUE_START_RECORDING: str = str(
+        BASE_DIR / "assets/audio_cues/start_recording.mp3"
+    )
+    AUDIO_CUE_END_RECORDING: str = str(BASE_DIR / "assets/audio_cues/end_recording.mp3")
 
     # --- Audio Processing Settings ---
     # General Audio
@@ -70,6 +76,24 @@ class Config:
     # Discord Audio Format (for audio received from and sent to Discord)
     DISCORD_AUDIO_FRAME_RATE: int = 48000  # Samples per second, per channel
     DISCORD_AUDIO_CHANNELS: int = 2  # Number of audio channels (e.g., 2 for stereo)
+
+    # --- Wake Word & VAD Settings ---
+    # openWakeWord settings
+    WAKE_WORD_MODEL_PATH: str = str(BASE_DIR / "assets/wakeword_models/alexa_v0.1.onnx")
+    WAKE_WORD_THRESHOLD: float = 0.5  # Confidence threshold for detection
+    # VAD inside openWakeWord to improve ww accuracy.
+    WAKE_WORD_VAD_THRESHOLD: float = 0.5
+    WAKE_WORD_SAMPLE_RATE: int = 16000  # Sample rate for wake word model (Hz)
+
+    # webrtcvad settings for end-of-speech detection
+    VAD_SAMPLE_RATE: int = 16000  # Sample rate for VAD processing (Hz)
+    VAD_FRAME_DURATION_MS: int = 30  # Frame duration for VAD (10, 20, or 30)
+    VAD_AGGRESSIVENESS: int = 1  # VAD aggressiveness (0-3), 1 is a good balance
+    VAD_GRACE_PERIOD_MS: int = (
+        3000  # VAD will be ignored for this long after recording starts
+    )
+    VAD_MIN_SPEECH_DURATION_MS: int = 250  # Min speech to trigger recording stop
+    VAD_SILENCE_TIMEOUT_MS: int = 1000  # Silence after speech to stop recording
 
     # --- Logging Configuration ---
     LOG_LEVEL: Union[int, str] = logging.INFO  # General log level for file logs
@@ -126,6 +150,16 @@ class Config:
             raise ConfigError(
                 f"LOG_LEVEL must be a str or int, but got {type(cls.LOG_LEVEL).__name__}."
             )
+
+        # Validate VAD & Wake Word settings
+        if cls.VAD_AGGRESSIVENESS not in (0, 1, 2, 3):
+            raise ConfigError("VAD_AGGRESSIVENESS must be an integer from 0 to 3.")
+        if cls.VAD_FRAME_DURATION_MS not in (10, 20, 30):
+            raise ConfigError("VAD_FRAME_DURATION_MS must be 10, 20, or 30.")
+        if not (0.0 <= cls.WAKE_WORD_THRESHOLD <= 1.0):
+            raise ConfigError("WAKE_WORD_THRESHOLD must be between 0.0 and 1.0.")
+        if not (0.0 <= cls.WAKE_WORD_VAD_THRESHOLD <= 1.0):
+            raise ConfigError("WAKE_WORD_VAD_THRESHOLD must be between 0.0 and 1.0.")
 
 
 Config.validate()  # Validate configuration on import

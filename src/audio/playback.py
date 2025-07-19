@@ -1,4 +1,5 @@
 import asyncio
+import io
 import os
 from dataclasses import dataclass, field
 from typing import Optional, Tuple
@@ -6,6 +7,7 @@ from typing import Optional, Tuple
 import discord
 from discord import FFmpegPCMAudio
 from discord.ext import voice_recv
+from pydub import AudioSegment
 
 from src.config.config import Config
 from src.utils.logger import get_logger
@@ -69,6 +71,53 @@ class AudioPlaybackManager:
         if self._current_stream_id:
             return self._current_stream_id.split("-", 1)[0]
         return None
+
+    async def play_cue(self, cue_name: str) -> None:
+        """
+        Plays a short audio cue file by treating it as a high-priority stream.
+
+        This method leverages the existing stream management infrastructure to
+        play a cue, ensuring it doesn't conflict with ongoing AI responses.
+
+        Args:
+            cue_name: The name of the cue ("start_recording" or "end_recording").
+        """
+        if not self.guild.voice_client:
+            return
+
+        cue_path = ""
+        if cue_name == "start_recording":
+            cue_path = Config.AUDIO_CUE_START_RECORDING
+        elif cue_name == "end_recording":
+            cue_path = Config.AUDIO_CUE_END_RECORDING
+
+        if not cue_path or not os.path.exists(cue_path):
+            logger.error(f"Audio cue '{cue_name}' not found at path: {cue_path}")
+            return
+
+        cue_stream_id = f"cue_{cue_name}_{int(asyncio.get_running_loop().time())}"
+        stream_started = False
+        try:
+            # Decode the mp3 file into raw PCM audio using pydub
+            cue_audio = AudioSegment.from_mp3(cue_path)
+            cue_format = (cue_audio.frame_rate, cue_audio.channels)
+
+            # The manager loop will see this new stream and interrupt any current playback
+            await self.start_new_audio_stream(cue_stream_id, cue_format)
+            stream_started = True
+
+            buffer = io.BytesIO()
+            cue_audio.export(buffer, format="raw")
+            await self.add_audio_chunk(buffer.getvalue())
+
+        except Exception as e:
+            logger.error(
+                f"Error processing audio cue file {cue_name}: {e}", exc_info=True
+            )
+        finally:
+            # Signal the end of this specific cue stream so the manager can clean it up
+            if stream_started:
+                await self.end_audio_stream(stream_id_override=cue_stream_id)
 
     async def start_new_audio_stream(
         self, stream_id: str, response_format: Tuple[int, int]

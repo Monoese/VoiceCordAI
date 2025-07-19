@@ -3,12 +3,13 @@ UI Manager module for handling GuildSession UI components.
 """
 
 import asyncio
+import os
 from typing import Optional
 
 import discord
 
 from src.config.config import Config
-from src.bot.state import BotState, BotStateEnum, StateEvent
+from src.bot.state import BotState, BotModeEnum, BotStateEnum, StateEvent
 from src.utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -17,8 +18,9 @@ logger = get_logger(__name__)
 class SessionUIManager:
     """Manages the UI components of a GuildSession, primarily the standby message."""
 
-    def __init__(self, guild_id: int, bot_state: BotState):
-        self.guild_id = guild_id
+    def __init__(self, guild: discord.Guild, bot_state: BotState):
+        self.guild = guild
+        self.guild_id = guild.id
         self.bot_state = bot_state
         self.standby_message: Optional[discord.Message] = None
         self._update_queue: asyncio.Queue[None] = asyncio.Queue()
@@ -29,50 +31,101 @@ class SessionUIManager:
         """Callback for when bot state changes, which schedules a UI update."""
         self.schedule_update()
 
-    def get_message_content(self) -> str:
-        """Generate the standby message content based on the current state."""
-        current_state = self.bot_state.current_state
-        main_content: str
-        authority_user_note: str = "can control the recording actions."
-        authority_user_name = self.bot_state.get_authority_user_name()
+    def _get_consented_user_list(self) -> str:
+        """Generates a formatted string of consented user names."""
+        user_ids = self.bot_state.get_consented_user_ids()
+        if not user_ids:
+            return "No one has consented yet."
 
-        if current_state == BotStateEnum.CONNECTION_ERROR:
-            main_content = (
+        names = []
+        for user_id in user_ids:
+            member = self.guild.get_member(user_id)
+            names.append(
+                member.display_name if member else f"Unknown User (ID: {user_id})"
+            )
+        return ", ".join(names)
+
+    def _get_manual_control_content(self) -> str:
+        """Generates the UI content for ManualControl mode."""
+        state = self.bot_state.current_state
+        state_info = ""
+
+        if state == BotStateEnum.STANDBY:
+            state_info = "Listening for wake word or Push-to-Talk..."
+        elif state == BotStateEnum.RECORDING:
+            auth_user = self.bot_state.get_authority_user_name()
+            state_info = f"🔴 Recording `{auth_user}`..."
+
+        consented_users = self._get_consented_user_list()
+
+        # Dynamically get the wake word from the model filename
+        model_filename = os.path.basename(Config.WAKE_WORD_MODEL_PATH)
+        wake_word = model_filename.split("_")[0].capitalize()
+
+        return (
+            f"**🎙️ Voice Chat Session - Manual Control**\n\n"
+            f"---\n"
+            f"### Instructions\n"
+            f"- **Push-to-Talk**: React with {Config.REACTION_TRIGGER_PTT} to start/stop recording.\n"
+            f"- **Wake Word**: Say '{wake_word}' to start recording.\n"
+            f"- **Give Consent**: React with {Config.REACTION_GRANT_CONSENT} to grant/revoke consent.\n"
+
+            f"---\n"
+            f"### Status\n"
+            f"- **State**: `{state_info}`\n"
+            f"- **Consented Users for Wake Word**: {consented_users}"
+        )
+
+    def _get_realtime_talk_content(self) -> str:
+        """Generates the UI content for RealtimeTalk mode."""
+        state = self.bot_state.current_state
+        state_info = ""
+
+        if state == BotStateEnum.LISTENING:
+            state_info = "Actively listening..."
+        elif state == BotStateEnum.SPEAKING:
+            state_info = "AI is speaking..."
+
+        consented_users = self._get_consented_user_list()
+        user_list_title = (
+            "Streaming Audio From"
+            if consented_users != "No one has consented yet."
+            else "Consented Users"
+        )
+
+        return (
+            f"**🗣️ Voice Chat Session - Realtime Talk**\n\n"
+            f"---\n"
+            f"### Instructions\n"
+            f"- **Speak Freely**: The AI will manage turn-taking automatically.\n"
+            f"- **Give Consent**: React with {Config.REACTION_GRANT_CONSENT} to grant/revoke consent.\n"
+            f"- **Switch Mode**: React with {Config.REACTION_MODE_MANUAL} to switch to Manual Control.\n"
+            f"---\n"
+            f"### Status\n"
+            f"- **State**: `{state_info}`\n"
+            f"- **{user_list_title}**: {consented_users}"
+        )
+
+    def get_message_content(self) -> str:
+        """Generate the standby message content based on the current mode and state."""
+        if self.bot_state.current_state == BotStateEnum.CONNECTION_ERROR:
+            return (
                 f"**⚠️ Voice Chat Session - CONNECTION ERROR **\n\n"
                 f"---\n"
-                f"### 🛠 Current State:\n"
-                f"- **State**: `{current_state.value}`\n"
-                f"- **Details**: The bot has encountered a connection issue (voice or services) and may not be fully functional.\n"
-                f"- **Action**: Please try `{Config.COMMAND_PREFIX}disconnect` and then `{Config.COMMAND_PREFIX}connect` again.\n"
-                f"If the issue persists, contact an administrator."
+                f"- **State**: `{self.bot_state.current_state.value}`\n"
+                f"- **Details**: The bot has encountered a connection issue.\n"
+                f"- **Action**: Try `{Config.COMMAND_PREFIX}disconnect` and then `{Config.COMMAND_PREFIX}connect` again."
             )
-            authority_user_note = "can control the recording actions (if applicable)."
-        else:
-            main_content = (
-                f"**🎙 Voice Chat Session - **\n\n"
-                f"---\n"
-                f"### 🔄 How to control the bot:\n"
-                f"1. **Start Recording**: React with {Config.REACTION_START_RECORDING} to start recording.\n"
-                f"2. **Finish Recording**: Remove your {Config.REACTION_START_RECORDING} reaction to finish recording.\n"
-                f"3. **Give Consent**: React with {Config.REACTION_GRANT_CONSENT} to allow your voice to be recorded in sessions started by others.\n"
-                f"4. **Debug Recording**: React with {Config.REACTION_DEBUG_RECORDING} to record and play back audio.\n"
-                f"5. **End Session**: Use `{Config.COMMAND_PREFIX}disconnect` to end the session.\n"
-                f"6. **Switch AI**: Use `{Config.COMMAND_PREFIX}set <name>` (e.g., openai, gemini).\n"
-                f"---\n"
-                f"### 🛠 Current State:\n"
-                f"- **State**: `{current_state.value}`"
-            )
+
+        mode_content = self._get_manual_control_content()
 
         shared_content = (
             f"---\n"
-            f"### 🤖 AI Provider:\n"
-            f"> Active Service: `{self.bot_state.active_ai_provider_name.upper()}`\n"
-            f"---\n"
-            f"### 🧑 Authority User:\n"
-            f"> `{authority_user_name}` {authority_user_note}"
+            f"### 🤖 AI Provider: `{self.bot_state.active_ai_provider_name.upper()}`\n"
+            f"Use `{Config.COMMAND_PREFIX}set <name>` (e.g., openai, gemini) to switch."
         )
 
-        return f"{main_content}\n{shared_content}"
+        return f"{mode_content}\n{shared_content}"
 
     async def _update_message(self) -> None:
         """Update the standby message with the current state."""
@@ -134,9 +187,8 @@ class SessionUIManager:
         """Creates and sends the initial standby message."""
         try:
             self.standby_message = await channel.send(self.get_message_content())
-            await self.standby_message.add_reaction(Config.REACTION_START_RECORDING)
             await self.standby_message.add_reaction(Config.REACTION_GRANT_CONSENT)
-            await self.standby_message.add_reaction(Config.REACTION_DEBUG_RECORDING)
+            await self.standby_message.add_reaction(Config.REACTION_TRIGGER_PTT)
             return True
         except discord.DiscordException as e:
             logger.error(

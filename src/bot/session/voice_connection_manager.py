@@ -12,8 +12,7 @@ import discord
 from discord.ext import voice_recv
 
 from src.audio.playback import AudioPlaybackManager
-from src.audio.recorder import create_sink
-from src.bot.state import BotState
+from src.audio.sinks import AudioSink
 from src.utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -117,12 +116,12 @@ class VoiceConnectionManager:
             logger.error(f"Error disconnecting from voice channel: {e}", exc_info=True)
             return False
 
-    def start_listening(self, bot_state: BotState) -> bool:
+    def start_listening(self, sink: AudioSink) -> bool:
         """
-        Start listening for audio from the voice channel by activating the sink.
+        Start listening for audio from the voice channel with the provided sink.
 
         Args:
-            bot_state: The state manager instance for accessing consent info.
+            sink: The initialized audio sink to receive audio data.
 
         Returns:
             bool: True if listening started successfully, False otherwise.
@@ -133,36 +132,19 @@ class VoiceConnectionManager:
             return False
 
         try:
-            sink = create_sink(bot_state=bot_state)
             voice_client.listen(sink)
-            logger.info("Started listening with new audio sink.")
+            logger.info(f"Started listening with new audio sink: {type(sink).__name__}")
             return True
         except Exception as e:
             logger.error(f"Error starting listening: {e}", exc_info=True)
             return False
 
-    def stop_listening(self) -> bytes:
-        """
-        Stop listening for audio and return the captured data.
-
-        Returns:
-            bytes: The recorded PCM audio data, or empty bytes if no data was captured.
-        """
+    def stop_listening(self) -> None:
+        """Stops listening for audio."""
         voice_client = self._get_voice_client()
-        if not (voice_client and hasattr(voice_client, "sink") and voice_client.sink):
-            logger.warning("Cannot stop listening: No active sink.")
-            return bytes()
-
-        try:
-            pcm_data = bytes(voice_client.sink.audio_data)
+        if voice_client and voice_client.is_listening():
             voice_client.stop_listening()
-            logger.info(
-                f"Stopped listening. Retrieved {len(pcm_data)} bytes of audio data."
-            )
-            return pcm_data
-        except Exception as e:
-            logger.error(f"Error stopping listening: {e}", exc_info=True)
-            return bytes()
+            logger.info("Stopped listening.")
 
     def is_connected(self) -> bool:
         """

@@ -14,6 +14,7 @@ import discord
 from discord.ext import commands
 
 from src.bot.session.guild_session import GuildSession
+from src.bot.state import BotModeEnum
 from src.utils.logger import get_logger
 
 
@@ -140,13 +141,13 @@ class VoiceCog(commands.Cog):
         if session:
             await session.handle_reaction_remove(reaction, user)
 
-    @commands.command(name="connect")
-    async def connect_command(self, ctx: commands.Context) -> None:
+    @commands.command(name="connect", aliases=["manual_connect"])
+    async def connect_manual_command(self, ctx: commands.Context) -> None:
         """
-        Delegates the 'connect' command to a GuildSession.
+        Connects the bot in ManualControl mode.
 
-        If the connection process fails, the created session is cleaned up
-        to prevent inactive sessions from leaking.
+        This command is also aliased as `manual_connect`. It will fail if a
+        session is already active in the guild.
 
         Args:
             ctx: The command context.
@@ -154,13 +155,50 @@ class VoiceCog(commands.Cog):
         if not ctx.guild:
             await ctx.send("This command can only be used in a server.")
             return
+
+        if ctx.guild.id in self._sessions:
+            await ctx.send(
+                "I'm already in a session in this server. Use `/disconnect` to end it first."
+            )
+            return
+
         session = self._get_or_create_session(ctx.guild)
-        success = await session.connect(ctx)
+        success = await session.initialize_session(ctx, BotModeEnum.ManualControl)
         if not success:
             logger.warning(
-                f"Connection process failed for guild {ctx.guild.id}. Cleaning up session."
+                f"Manual connection process failed for guild {ctx.guild.id}. Cleaning up session."
             )
-            del self._sessions[ctx.guild.id]
+            if ctx.guild.id in self._sessions:
+                del self._sessions[ctx.guild.id]
+
+    @commands.command(name="realtime_connect")
+    async def connect_realtime_command(self, ctx: commands.Context) -> None:
+        """
+        Connects the bot in RealtimeTalk mode.
+
+        This command will fail if a session is already active in the guild.
+
+        Args:
+            ctx: The command context.
+        """
+        if not ctx.guild:
+            await ctx.send("This command can only be used in a server.")
+            return
+
+        if ctx.guild.id in self._sessions:
+            await ctx.send(
+                "I'm already in a session in this server. Use `/disconnect` to end it first."
+            )
+            return
+
+        session = self._get_or_create_session(ctx.guild)
+        success = await session.initialize_session(ctx, BotModeEnum.RealtimeTalk)
+        if not success:
+            logger.warning(
+                f"Realtime connection process failed for guild {ctx.guild.id}. Cleaning up session."
+            )
+            if ctx.guild.id in self._sessions:
+                del self._sessions[ctx.guild.id]
 
     @commands.command(name="set")
     async def set_provider_command(

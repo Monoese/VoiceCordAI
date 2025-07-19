@@ -1,12 +1,12 @@
 # VoiceCordAI - Voice Chat Bot in Discord
 
-A Discord bot that enables real-time voice chat with AI from providers like OpenAI and Google Gemini, directly within a Discord voice channel.
+A Discord bot that enables voice chat with AI from providers like OpenAI and Google Gemini, directly within a Discord voice channel.
 
 ## Features
 
-- Real-time voice conversations with AI in Discord voice channels.
+- Voice interaction with AI using wake-word and push-to-talk.
 - Support for multiple providers (OpenAI GPT-4, Google Gemini).
-- Simple, reaction-based controls for push-to-talk style interaction.
+- Simple, reaction-based controls for interacting with the bot.
 - Privacy-focused with an opt-in consent model for voice recording.
 - Switch between AI providers on-the-fly with a command.
 
@@ -117,16 +117,22 @@ python main.py
 |---|---|---|
 | `/connect` | Joins your voice channel and enters standby mode. | `/connect` |
 | `/disconnect` | Leaves the voice channel and resets the bot. | `/disconnect` |
-| `/set` | Sets the AI provider (`openai` or `gemini`). The OpenAI provider is currently recommended for stability. | `/set openai` |
+| `/set` | Sets the AI provider (`openai` or `gemini`). | `/set openai` |
 
 ### Voice Controls
 
-After using `/connect`, the bot posts a status message. Use reactions on that message to control it.
+After using `/connect`, the bot posts a status message. Use reactions on that message to control it. There are two ways to start a recording:
 
-- **Add 🎙️ Reaction:** Start recording your voice. This makes you the session leader.
-- **Remove 🎙️ Reaction:** Stop recording and send your audio to the AI.
-- **Add ✋ Reaction:** Give consent for your voice to be recorded in sessions started by other users.
-- **Add ❌ Reaction:** Cancel the current recording and discard the audio (only works if you are the session leader).
+1.  **Push-to-Talk:**
+    - **Add 🎙️ Reaction:** Start recording your voice.
+    - **Remove 🎙️ Reaction:** Stop recording and send your audio to the AI.
+
+2.  **Wake Word:**
+    - Say the wake word (e.g., "Alexa") to start recording.
+    - The bot will automatically detect when you stop speaking and send your audio to the AI.
+
+**Other Controls:**
+- **Add 🙏 Reaction:** Give or revoke consent for your voice to be recorded. You must grant consent to use the wake word feature.
 
 ## Troubleshooting
 
