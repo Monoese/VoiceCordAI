@@ -73,7 +73,6 @@ class BotStateEnum(Enum):
     IDLE = "idle"
     # --- ManualControl States ---
     STANDBY = "standby"
-    PREPARING_TO_RECORD = "preparing_to_record"
     RECORDING = "recording"
     # --- RealtimeTalk States ---
     LISTENING = "listening"

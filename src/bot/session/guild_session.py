@@ -227,12 +227,7 @@ class GuildSession:
                 if self._audio_sink:
                     sink: "ManualControlSink" = self._audio_sink  # type: ignore
                     audio_data = sink.stop_and_get_audio()
-                    if audio_data:
-                        task = asyncio.create_task(
-                            self._process_manual_audio_task(audio_data)
-                        )
-                        self._background_tasks.add(task)
-                        task.add_done_callback(self._background_tasks.discard)
+                    self._handle_finished_recording(audio_data)
                 await self.bot_state.stop_recording()
 
     # --- New Callback Methods (passed to ManualControlSink) ---
@@ -265,20 +260,29 @@ class GuildSession:
                 or self.bot_state.recording_method != RecordingMethod.WakeWord
             ):
                 return
-            
+
             logger.info("VAD detected end of speech. Transitioning to STANDBY.")
             # Await the sound cue to provide immediate user feedback.
             await self.audio_playback_manager.play_cue("end_recording")
 
             # Start processing the audio in a background task.
-            if audio_data:
-                logger.info(f"Creating audio processing task for {len(audio_data)} bytes.")
-                task = asyncio.create_task(self._process_manual_audio_task(audio_data))
-                self._background_tasks.add(task)
-                task.add_done_callback(self._background_tasks.discard)
+            self._handle_finished_recording(audio_data)
             await self.bot_state.stop_recording()
 
     # --- New Core Logic Methods ---
+    def _handle_finished_recording(self, audio_data: bytes) -> None:
+        """
+        Creates a background task to process finished recording audio.
+
+        This helper method consolidates the common logic used by both
+        push-to-talk and wake word triggered recordings.
+        """
+        if audio_data:
+            logger.info(f"Creating audio processing task for {len(audio_data)} bytes.")
+            task = asyncio.create_task(self._process_manual_audio_task(audio_data))
+            self._background_tasks.add(task)
+            task.add_done_callback(self._background_tasks.discard)
+
     async def _process_manual_audio_task(self, audio_data: bytes) -> None:
         """Task to process a finished audio recording from ManualControl mode."""
         try:

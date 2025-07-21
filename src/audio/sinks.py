@@ -66,16 +66,16 @@ class AudioSink(voice_recv.AudioSink, ABC):
 class VADAnalyzer:
     """
     A stateful Voice Activity Detection (VAD) analyzer for detecting speech boundaries.
-    
+
     This class implements a robust VAD algorithm that tracks speech and silence periods
     to reliably detect when a user has finished speaking. It uses configurable thresholds
     to avoid false positives from short pauses or background noise.
-    
+
     Threading Model:
     - VAD processing is called from audio sink write() methods (Discord's audio thread)
     - Callbacks are scheduled on the main event loop using call_soon_threadsafe()
     - This ensures thread-safe communication between audio processing and async logic
-    
+
     State Machine:
     - SILENT: Initial state, waiting for sustained speech
     - SPEAKING: Speech detected, monitoring for end-of-speech silence
@@ -152,7 +152,7 @@ class RealtimeMixingSink(AudioSink):
     OVERVIEW:
     This sink creates a real-time mixed audio stream from multiple consented users,
     suitable for streaming to AI services that support multi-party conversations.
-    
+
     AUDIO PROCESSING PIPELINE:
     1. Raw PCM audio arrives from Discord (48kHz, 16-bit, stereo, 20ms chunks)
     2. Audio is buffered per-user in _user_buffers
@@ -160,12 +160,12 @@ class RealtimeMixingSink(AudioSink):
     4. For each user: extract 20ms chunk OR pad with silence if no audio available
     5. Mix all chunks into single audio stream using audioop.add()
     6. Place mixed audio on output_queue for consumption by GuildSession
-    
+
     THREADING MODEL:
     - write() method: Called from Discord's audio thread, thread-safe buffer updates
     - _mixer_loop(): Async task on main event loop, uses run_in_executor for CPU-intensive mixing
     - This design prevents blocking the event loop during audio mixing operations
-    
+
     BUFFER MANAGEMENT:
     - Each user has independent audio buffer (bytearray for efficient append/slice)
     - Silence padding ensures continuous streams even when users aren't speaking
@@ -185,7 +185,9 @@ class RealtimeMixingSink(AudioSink):
         self._chunk_size = (
             48000 // 50 * Config.DISCORD_AUDIO_CHANNELS * Config.SAMPLE_WIDTH
         )
-        self._silence_chunk = b"\x00" * self._chunk_size  # Pre-computed silence for padding
+        self._silence_chunk = (
+            b"\x00" * self._chunk_size
+        )  # Pre-computed silence for padding
 
         self._mixer_task: Optional[asyncio.Task] = None
         self._loop = asyncio.get_running_loop()
@@ -282,58 +284,58 @@ class ManualControlSink(AudioSink):
     between listening for wake words from all users and recording commands from
     a single authority user. It coordinates wake word detection, voice activity
     detection, and audio buffering for command processing.
-    
+
     OPERATIONAL MODES:
-    
+
     1. STANDBY MODE (bot_state.current_state == BotStateEnum.STANDBY):
        - Continuous parallel wake word detection for all consented users
        - Each user gets dedicated openWakeWord model instance
        - Audio processing: 48kHz stereo -> 16kHz mono -> 80ms chunks for wake word models
        - When wake word detected: triggers callback to GuildSession, clears buffers
-    
+
     2. RECORDING MODE (bot_state.current_state == BotStateEnum.RECORDING):
        - Single-user audio capture from authority_user
        - Optional VAD (Voice Activity Detection) for wake word triggered recordings
        - Audio buffering: Raw PCM accumulated in _authority_buffer
        - VAD processing: 48kHz stereo -> 16kHz mono -> configurable frame analysis
        - When speech ends: triggers callback with captured audio data
-    
+
     AUDIO PROCESSING PIPELINE:
-    
+
     Wake Word Path (STANDBY):
     1. Raw PCM (48kHz, 16-bit, stereo) -> _user_audio_buffers[user_id]
     2. Resample to 16kHz mono using audioop.ratecv (maintains state per user)
     3. Buffer resampled audio in _ww_resampled_buffers[user_id]
     4. Process in 1280-byte chunks (80ms of 16kHz mono) through openWakeWord models
     5. On detection: reset model state, clear buffers, schedule callback
-    
+
     VAD Path (RECORDING with wake word trigger):
     1. Raw PCM -> _authority_buffer (for final output) + _vad_raw_buffer (for VAD)
     2. Resample VAD stream to 16kHz mono for webrtcvad compatibility
     3. Process in configurable frame sizes (10ms, 20ms, or 30ms)
     4. VADAnalyzer tracks speech/silence patterns with configurable thresholds
     5. On speech end: callback with buffered audio, reset all state
-    
+
     THREADING MODEL:
     - write() method: Discord audio thread, must be non-blocking and thread-safe
     - Wake word processing: Synchronous in write() method (fast, <1ms per chunk)
     - VAD processing: Scheduled on event loop via run_coroutine_threadsafe()
     - _vad_monitor_loop(): Async task that injects silence when no audio received
     - Callbacks: Scheduled on main event loop for integration with GuildSession
-    
+
     CONCURRENCY & SAFETY:
     - _vad_lock: Protects VAD processing from race conditions between real audio and silence injection
     - Atomic state capture in write() method prevents race conditions during state transitions
     - Thread-safe callback scheduling using run_coroutine_threadsafe()
     - Graceful cleanup with proper task cancellation and resource deallocation
-    
+
     BUFFER MANAGEMENT:
     - _user_audio_buffers: Raw 48kHz audio per user for wake word detection
     - _ww_resampled_buffers: 16kHz mono audio per user, ready for wake word models
     - _authority_buffer: Final output buffer containing command audio
     - _vad_raw_buffer + _vad_resampled_buffer: VAD processing pipeline buffers
     - Automatic buffer clearing prevents memory leaks and audio contamination
-    
+
     ERROR HANDLING:
     - Wake word model initialization failures are logged but don't crash the sink
     - VAD processing errors are isolated and logged
@@ -369,14 +371,22 @@ class ManualControlSink(AudioSink):
         self._vad_analyzer: Optional[VADAnalyzer] = None
 
         # VAD silence injection system - coordinates between real audio and synthetic silence
-        self._has_received_audio_for_vad: bool = False  # Flag: real audio received this cycle
-        self._vad_monitor_task: Optional[asyncio.Task] = None  # Background silence injection task
-        self._silence_chunk_vad = b"\x00" * 3840  # 20ms of 48kHz stereo 16-bit PCM silence
-        self._vad_lock = asyncio.Lock()  # Prevents race conditions between real audio and silence
+        self._has_received_audio_for_vad: bool = (
+            False  # Flag: real audio received this cycle
+        )
+        self._vad_monitor_task: Optional[asyncio.Task] = (
+            None  # Background silence injection task
+        )
+        self._silence_chunk_vad = (
+            b"\x00" * 3840
+        )  # 20ms of 48kHz stereo 16-bit PCM silence
+        self._vad_lock = (
+            asyncio.Lock()
+        )  # Prevents race conditions between real audio and silence
 
         for user_id in initial_consented_users:
             self.add_user(user_id)
-        
+
         self.start()
 
     def add_user(self, user_id: int) -> None:
@@ -417,7 +427,7 @@ class ManualControlSink(AudioSink):
     def start(self):
         """
         Initializes and starts the VAD monitor background task.
-        
+
         The VAD monitor is essential for proper speech end detection as it
         ensures continuous VAD processing even during audio gaps from Discord.
         """
@@ -428,11 +438,11 @@ class ManualControlSink(AudioSink):
     def enable_vad(self, enabled: bool):
         """
         Controls VAD processing for the current recording session.
-        
+
         VAD is only used for wake word triggered recordings to detect natural
         speech end. Push-to-talk recordings don't use VAD since the user
         explicitly controls the recording duration.
-        
+
         When disabled, clears the received audio flag and resets VAD state
         to ensure clean state for the next recording session.
         """
@@ -444,23 +454,23 @@ class ManualControlSink(AudioSink):
     def stop_and_get_audio(self) -> bytes:
         """
         Immediately stops recording and returns captured audio data.
-        
+
         Used for push-to-talk interactions where the user explicitly controls
         recording duration by releasing the reaction. This method ensures clean
         state reset and prevents wake word re-triggering from buffered audio.
-        
+
         CLEANUP SEQUENCE:
         1. Disable VAD (not used for PTT anyway)
         2. Capture current authority buffer contents
         3. Clear wake word detection state for authority user
         4. Reset all recording-related buffers and state
-        
+
         Returns:
             bytes: The captured audio data in Discord's native PCM format
         """
         self.enable_vad(False)
         audio_data = bytes(self._authority_buffer)
-        
+
         # Clear the wake-word buffer for the user who was just speaking
         # to prevent immediate re-triggering from latent audio.
         authority_user_id = self._bot_state.authority_user_id
@@ -473,7 +483,7 @@ class ManualControlSink(AudioSink):
                 self._ww_resampled_buffers[authority_user_id].clear()
             if authority_user_id in self._ww_resample_state:
                 self._ww_resample_state[authority_user_id] = None
-        
+
         self._authority_buffer.clear()
         self._vad_raw_buffer.clear()
         self._vad_resampled_buffer.clear()
@@ -486,7 +496,7 @@ class ManualControlSink(AudioSink):
     def wants_opus(self) -> bool:
         """
         Discord audio format preference.
-        
+
         Returns False to request raw PCM data instead of Opus-encoded audio.
         PCM is required for real-time audio processing like wake word detection
         and VAD analysis.
@@ -496,18 +506,18 @@ class ManualControlSink(AudioSink):
     async def _vad_monitor_loop(self):
         """
         Background task that ensures VAD continues processing during audio gaps.
-        
+
         PURPOSE:
         VAD requires continuous audio input to detect silence periods that indicate
         end-of-speech. Discord only sends audio when users are actively speaking,
         so we must inject synthetic silence during gaps to maintain VAD timing.
-        
+
         OPERATION:
         - Runs every 20ms (synchronized with Discord's audio frame timing)
         - Only active when VAD is enabled (_is_vad_enabled = True)
         - Injects silence only when no real audio was received in the last interval
         - Uses _has_received_audio_for_vad flag to coordinate with write() method
-        
+
         This approach ensures VAD can detect the transition from speech to silence
         that indicates the user has finished their command.
         """
@@ -535,10 +545,10 @@ class ManualControlSink(AudioSink):
     def _resample_and_convert(self, raw_chunk: bytes, user_id: int) -> bytes:
         """
         Convert Discord audio format to wake word model requirements.
-        
+
         Discord provides: 48kHz, 16-bit, stereo PCM
         Wake word models need: 16kHz, 16-bit, mono PCM
-        
+
         Uses audioop.ratecv() which maintains per-user conversion state
         for smooth resampling across chunk boundaries.
         """
@@ -562,14 +572,14 @@ class ManualControlSink(AudioSink):
         This method is called by VADAnalyzer when speech end is detected.
         It must immediately reset all recording state to prevent audio loss
         or contamination for the next interaction.
-        
+
         SEQUENCE:
         1. Disable VAD to stop further processing
         2. Capture current audio buffer contents
         3. Clear wake word buffers for authority user (prevents re-triggering)
         4. Reset all VAD-related state and buffers
         5. Schedule background processing task for captured audio
-        
+
         The callback is scheduled as a background task rather than awaited
         to ensure the sink becomes available immediately for the next interaction.
         This prevents blocking and maintains responsiveness.
@@ -607,7 +617,7 @@ class ManualControlSink(AudioSink):
     async def _process_vad_async(self, pcm_data: bytes):
         """
         Thread-safe async wrapper for VAD processing.
-        
+
         This method is called via run_coroutine_threadsafe() from the write() method
         to move VAD processing from Discord's audio thread to the main event loop.
         The _vad_lock prevents race conditions between real audio and silence injection.
@@ -618,14 +628,14 @@ class ManualControlSink(AudioSink):
     def _process_vad(self, pcm_data: bytes):
         """
         Core VAD processing logic for detecting end-of-speech.
-        
+
         PROCESSING PIPELINE:
         1. Buffer incoming PCM data in _vad_raw_buffer
         2. Process in 20ms chunks (3840 bytes of 48kHz stereo)
         3. Convert each chunk: stereo -> mono, 48kHz -> 16kHz (VAD sample rate)
         4. Buffer resampled audio for frame-based VAD analysis
         5. Feed VAD-compatible frames to VADAnalyzer
-        
+
         The VADAnalyzer handles the state machine for detecting sustained
         speech and meaningful silence periods that indicate end-of-command.
         """
@@ -671,16 +681,16 @@ class ManualControlSink(AudioSink):
     def write(self, user: discord.User, data: voice_recv.VoiceData):
         """
         Main entry point for all audio data from Discord.
-        
+
         This method is called from Discord's audio thread for every 20ms audio frame
         from each user in the voice channel. It must be fast, non-blocking, and
         thread-safe since it's not running on the main event loop.
-        
+
         ROUTING LOGIC:
         - RECORDING state: Route authority user's audio to recording pipeline
         - STANDBY state: Route all consented users' audio to wake word detection
         - Invalid users or states: Ignore audio data
-        
+
         PERFORMANCE NOTES:
         - Wake word processing is synchronous (typically <1ms per chunk)
         - VAD processing is scheduled asynchronously to avoid blocking
@@ -715,54 +725,61 @@ class ManualControlSink(AudioSink):
             self._bot_state.current_state == BotStateEnum.STANDBY
             and user.id in self._detectors
         ):
-            self._user_audio_buffers[user.id].extend(data.pcm)
-            buffer = self._user_audio_buffers[user.id]
-            logger.debug(f"User {user.id} buffer size: {len(buffer)}")
-            # Process in chunks large enough for at least one resample operation
-            # 7680 bytes of 48kHz stereo -> 1920 frames -> 640 frames @ 16kHz mono -> 1280 bytes
-            min_raw_bytes = 7680
-            if len(buffer) >= min_raw_bytes:
-                processed_bytes = 0
-                resampled_buffer = self._ww_resampled_buffers[user.id]
-                while len(buffer) - processed_bytes >= min_raw_bytes:
-                    raw_chunk = buffer[
-                        processed_bytes : processed_bytes + min_raw_bytes
-                    ]
-                    resampled = self._resample_and_convert(raw_chunk, user.id)
-                    resampled_buffer.extend(resampled)
-                    processed_bytes += min_raw_bytes
+            self._process_standby_audio(user, data)
 
-                # Remove the processed raw data from the beginning of the buffer
-                del buffer[:processed_bytes]
+    def _process_standby_audio(self, user: discord.User, data: voice_recv.VoiceData):
+        """
+        Processes audio data when the bot is in STANDBY state for wake word detection.
 
-                # Process the resampled buffer for wake words
-                while len(resampled_buffer) >= self._ww_chunk_size:
-                    ww_chunk_bytes = resampled_buffer[: self._ww_chunk_size]
-                    del resampled_buffer[: self._ww_chunk_size]
+        This method handles the complex wake word detection pipeline including:
+        - Audio buffering and resampling from Discord format to wake word model format
+        - Processing audio through openWakeWord models for detection
+        - Handling wake word detection events and state cleanup
+        """
+        self._user_audio_buffers[user.id].extend(data.pcm)
+        buffer = self._user_audio_buffers[user.id]
+        logger.debug(f"User {user.id} buffer size: {len(buffer)}")
+        # Process in chunks large enough for at least one resample operation
+        # 7680 bytes of 48kHz stereo -> 1920 frames -> 640 frames @ 16kHz mono -> 1280 bytes
+        min_raw_bytes = 7680
+        if len(buffer) >= min_raw_bytes:
+            processed_bytes = 0
+            resampled_buffer = self._ww_resampled_buffers[user.id]
+            while len(buffer) - processed_bytes >= min_raw_bytes:
+                raw_chunk = buffer[processed_bytes : processed_bytes + min_raw_bytes]
+                resampled = self._resample_and_convert(raw_chunk, user.id)
+                resampled_buffer.extend(resampled)
+                processed_bytes += min_raw_bytes
 
-                    # Convert bytes to numpy array for the model
-                    ww_chunk_np = np.frombuffer(ww_chunk_bytes, dtype=np.int16)
+            # Remove the processed raw data from the beginning of the buffer
+            del buffer[:processed_bytes]
 
-                    model = self._detectors[user.id]
-                    prediction = model.predict(ww_chunk_np)
-                    logger.debug(
-                        f"Wake word prediction for user {user.id}: {prediction}"
+            # Process the resampled buffer for wake words
+            while len(resampled_buffer) >= self._ww_chunk_size:
+                ww_chunk_bytes = resampled_buffer[: self._ww_chunk_size]
+                del resampled_buffer[: self._ww_chunk_size]
+
+                # Convert bytes to numpy array for the model
+                ww_chunk_np = np.frombuffer(ww_chunk_bytes, dtype=np.int16)
+
+                model = self._detectors[user.id]
+                prediction = model.predict(ww_chunk_np)
+                logger.debug(f"Wake word prediction for user {user.id}: {prediction}")
+
+                model_name = os.path.splitext(
+                    os.path.basename(Config.WAKE_WORD_MODEL_PATH)
+                )[0]
+
+                if (
+                    model_name in prediction
+                    and prediction[model_name] > Config.WAKE_WORD_THRESHOLD
+                ):
+                    logger.info(f"Wake word detected for user {user.id}")
+                    model.reset()
+                    self._loop.call_soon_threadsafe(
+                        asyncio.create_task, self._on_wake_word_detected(user)
                     )
-
-                    model_name = os.path.splitext(
-                        os.path.basename(Config.WAKE_WORD_MODEL_PATH)
-                    )[0]
-
-                    if (
-                        model_name in prediction
-                        and prediction[model_name] > Config.WAKE_WORD_THRESHOLD
-                    ):
-                        logger.info(f"Wake word detected for user {user.id}")
-                        model.reset()
-                        self._loop.call_soon_threadsafe(
-                            asyncio.create_task, self._on_wake_word_detected(user)
-                        )
-                        self._user_audio_buffers[user.id].clear()
-                        self._ww_resampled_buffers[user.id].clear()
-                        self._ww_resample_state[user.id] = None
-                        return
+                    self._user_audio_buffers[user.id].clear()
+                    self._ww_resampled_buffers[user.id].clear()
+                    self._ww_resample_state[user.id] = None
+                    return

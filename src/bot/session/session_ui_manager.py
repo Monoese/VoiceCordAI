@@ -9,7 +9,7 @@ from typing import Optional
 import discord
 
 from src.config.config import Config
-from src.bot.state import BotState, BotModeEnum, BotStateEnum, StateEvent
+from src.bot.state import BotState, BotStateEnum, StateEvent
 from src.utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -69,7 +69,6 @@ class SessionUIManager:
             f"- **Push-to-Talk**: React with {Config.REACTION_TRIGGER_PTT} to start/stop recording.\n"
             f"- **Wake Word**: Say '{wake_word}' to start recording.\n"
             f"- **Give Consent**: React with {Config.REACTION_GRANT_CONSENT} to grant/revoke consent.\n"
-
             f"---\n"
             f"### Status\n"
             f"- **State**: `{state_info}`\n"
