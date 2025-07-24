@@ -285,6 +285,9 @@ class GuildSession:
 
     async def _process_manual_audio_task(self, audio_data: bytes) -> None:
         """Task to process a finished audio recording from ManualControl mode."""
+        # Cross-session corruption fix: Capture session ID at start of processing
+        session_id = self.bot_state.current_session_id
+        
         try:
             # Get the audio format required by the active AI service
             target_format = self.ai_coordinator.get_processing_audio_format()
@@ -292,7 +295,7 @@ class GuildSession:
                 logger.error(
                     f"Could not determine target audio format for guild {self.guild.id}. Aborting processing."
                 )
-                await self.bot_state.enter_connection_error_state()
+                await self._safe_enter_error_state(session_id)
                 return
             target_frame_rate, target_channels = target_format
 
@@ -304,7 +307,7 @@ class GuildSession:
             )
 
             if not await self.ai_coordinator.send_audio_turn(processed_audio):
-                await self.bot_state.enter_connection_error_state()
+                await self._safe_enter_error_state(session_id)
         except asyncio.CancelledError:
             logger.info(
                 f"Manual audio processing task cancelled for guild {self.guild.id}."
@@ -313,10 +316,33 @@ class GuildSession:
             logger.error(
                 f"AI service API error in manual audio task: {e}", exc_info=True
             )
-            await self.bot_state.enter_connection_error_state()
+            await self._safe_enter_error_state(session_id)
         except Exception as e:
             logger.error(f"Unexpected error in manual audio task: {e}", exc_info=True)
-            await self.bot_state.enter_connection_error_state()
+            await self._safe_enter_error_state(session_id)
+
+    async def _safe_enter_error_state(self, original_session_id: int) -> None:
+        """
+        Safely enter error state only if the session hasn't changed.
+        
+        This prevents background tasks from corrupting unrelated new sessions.
+        Only enters error state if we're still processing the same session
+        that this background task was created for.
+        
+        Args:
+            original_session_id: The session ID when this background task started
+        """
+        async with self._action_lock:
+            if self.bot_state.current_session_id == original_session_id:
+                logger.info(
+                    f"Background task entering error state for session {original_session_id}"
+                )
+                await self.bot_state.enter_connection_error_state()
+            else:
+                logger.info(
+                    f"Background task from session {original_session_id} failed, but current session is "
+                    f"{self.bot_state.current_session_id}. Not entering error state to avoid corruption."
+                )
 
     async def _realtime_audio_streamer_task(self) -> None:
         """Task to continuously stream audio from RealtimeMixingSink to the AI."""
@@ -369,19 +395,27 @@ class GuildSession:
             return
 
         logger.info(f"Switching mode to {new_mode.value}")
-        # Cleanup old sink
-        if self._audio_sink:
-            self._audio_sink.cleanup()
-            self._audio_sink = None
+        
+        # Mode switch race fix: Ensure proper cleanup coordination
+        async with self._action_lock:
+            # Cleanup old sink with coordination
+            if self._audio_sink:
+                # First, stop voice connection from sending more audio to sink
+                self.voice_connection.stop_listening()
+                
+                # Now cleanup the sink safely
+                if hasattr(self._audio_sink, 'cleanup'):
+                    self._audio_sink.cleanup()
+                self._audio_sink = None
 
-        await self.bot_state.set_mode(new_mode)
-        await self._initialize_sink()
+            await self.bot_state.set_mode(new_mode)
+            await self._initialize_sink()
 
-        # Set default state for the new mode
-        if new_mode == BotModeEnum.ManualControl:
-            await self.bot_state.set_state(BotStateEnum.STANDBY)
-        elif new_mode == BotModeEnum.RealtimeTalk:
-            await self.bot_state.set_state(BotStateEnum.LISTENING)
+            # Set default state for the new mode
+            if new_mode == BotModeEnum.ManualControl:
+                await self.bot_state.set_state(BotStateEnum.STANDBY)
+            elif new_mode == BotModeEnum.RealtimeTalk:
+                await self.bot_state.set_state(BotStateEnum.LISTENING)
 
     async def initialize_session(
         self, ctx: commands.Context, mode: BotModeEnum
@@ -438,11 +472,13 @@ class GuildSession:
             )
             return
 
-        if await self.ai_coordinator.switch_provider(
-            provider_name,
-            ctx,
-            self.voice_connection.is_connected(),
-            on_connect=self._on_ai_connect,
-            on_disconnect=self._on_ai_disconnect,
-        ):
-            await ctx.send(f"AI provider switched to '{provider_name.upper()}'.")
+        # Provider switching race fix: Ensure atomic provider changes
+        async with self._action_lock:
+            if await self.ai_coordinator.switch_provider(
+                provider_name,
+                ctx,
+                self.voice_connection.is_connected(),
+                on_connect=self._on_ai_connect,
+                on_disconnect=self._on_ai_disconnect,
+            ):
+                await ctx.send(f"AI provider switched to '{provider_name.upper()}'.")

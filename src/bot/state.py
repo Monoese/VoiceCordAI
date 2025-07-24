@@ -113,6 +113,8 @@ class BotState:
         self._listeners: List[Callable[[StateEvent], Awaitable[None]]] = []
         # A set of user IDs who have granted consent to be recorded.
         self._consented_user_ids: Set[int] = set()
+        # Session tracking to prevent cross-session state corruption
+        self._current_session_id: int = 0
 
     @property
     def current_state(self) -> BotStateEnum:
@@ -164,6 +166,11 @@ class BotState:
     def get_consented_user_ids(self) -> Set[int]:
         """Get a copy of the set of user IDs who have consented to be recorded."""
         return self._consented_user_ids.copy()
+
+    @property
+    def current_session_id(self) -> int:
+        """Get the current session ID for tracking cross-session state corruption."""
+        return self._current_session_id
 
     def subscribe_to_state_changes(
         self, callback: Callable[[StateEvent], Awaitable[None]]
@@ -274,6 +281,7 @@ class BotState:
         1. Transitions the bot from STANDBY to RECORDING state
         2. Sets the authority user to the one who started recording
         3. Records the method used to start the recording (PTT or Wake Word)
+        4. Increments session ID to track recording sessions
 
         Args:
             user: The Discord user who is starting the recording.
@@ -286,6 +294,7 @@ class BotState:
         await self._set_state(BotStateEnum.RECORDING)
         self._set_authority(user)  # Assign control to the user who started recording
         self._recording_method = method
+        self._current_session_id += 1  # Increment session ID for cross-session tracking
 
     async def stop_recording(self) -> None:
         """

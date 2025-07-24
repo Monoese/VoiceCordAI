@@ -9,6 +9,7 @@ responsible for processing raw audio from users according to its mode's logic.
 import asyncio
 import audioop
 import os
+import threading
 from abc import ABC, abstractmethod
 from typing import Awaitable, Callable, Dict, List, Optional, Set
 
@@ -362,6 +363,12 @@ class ManualControlSink(AudioSink):
         self._ww_resample_state: Dict[int, Optional[any]] = {}
         self._ww_resampled_buffers: Dict[int, bytearray] = {}
         self._vad_resample_state = None
+        
+        # Thread-safe synchronization primitives for TOCTOU fix
+        self._authority_buffer_lock = threading.Lock()  # Protects authority audio buffer operations
+        self._ww_buffer_locks: Dict[int, threading.Lock] = {}  # Per-user wake word buffer protection
+        self._vad_flag_lock = threading.Lock()  # Protects VAD flag updates
+        self._user_data_lock = threading.Lock()  # CONCURRENCY FIX: Protects all user data dictionaries
         self._is_vad_enabled = False
         self._vad_grace_period_frames = (
             Config.VAD_GRACE_PERIOD_MS // 20
@@ -394,13 +401,16 @@ class ManualControlSink(AudioSink):
             return
         logger.info(f"Adding user {user_id} to ManualControlSink detectors.")
         try:
-            self._detectors[user_id] = Model(
-                wakeword_models=[Config.WAKE_WORD_MODEL_PATH],
-                vad_threshold=Config.WAKE_WORD_VAD_THRESHOLD,
-            )
-            self._user_audio_buffers[user_id] = bytearray()
-            self._ww_resampled_buffers[user_id] = bytearray()
-            self._ww_resample_state[user_id] = None
+            # CONCURRENCY FIX: Use dedicated lock for all user data operations
+            with self._user_data_lock:
+                self._detectors[user_id] = Model(
+                    wakeword_models=[Config.WAKE_WORD_MODEL_PATH],
+                    vad_threshold=Config.WAKE_WORD_VAD_THRESHOLD,
+                )
+                self._user_audio_buffers[user_id] = bytearray()
+                self._ww_resampled_buffers[user_id] = bytearray()
+                self._ww_resample_state[user_id] = None
+                self._ww_buffer_locks[user_id] = threading.Lock()  # Create per-user lock
         except Exception as e:
             logger.error(
                 f"Failed to initialize wake word model for user {user_id}: {e}",
@@ -411,10 +421,15 @@ class ManualControlSink(AudioSink):
         if user_id not in self._detectors:
             return
         logger.info(f"Removing user {user_id} from ManualControlSink detectors.")
-        self._detectors.pop(user_id, None)
-        self._user_audio_buffers.pop(user_id, None)
-        self._ww_resample_state.pop(user_id, None)
-        self._ww_resampled_buffers.pop(user_id, None)
+        
+        # CONCURRENCY FIX: Use dedicated lock for all user data operations
+        with self._user_data_lock:
+            # Clean up all user data atomically
+            self._detectors.pop(user_id, None)
+            self._user_audio_buffers.pop(user_id, None)
+            self._ww_resample_state.pop(user_id, None)
+            self._ww_resampled_buffers.pop(user_id, None)
+            self._ww_buffer_locks.pop(user_id, None)  # Safe to delete after data cleanup
 
     def cleanup(self) -> None:
         logger.info("Cleaning up ManualControlSink.")
@@ -469,27 +484,30 @@ class ManualControlSink(AudioSink):
             bytes: The captured audio data in Discord's native PCM format
         """
         self.enable_vad(False)
-        audio_data = bytes(self._authority_buffer)
+        
+        # TOCTOU Fix: Atomic authority buffer capture and clear
+        with self._authority_buffer_lock:
+            audio_data = bytes(self._authority_buffer)
+            self._authority_buffer.clear()
+            self._vad_raw_buffer.clear()
+            self._vad_resampled_buffer.clear()
+            self._vad_resample_state = None
+            if self._vad_analyzer:
+                self._vad_analyzer.reset()
 
-        # Clear the wake-word buffer for the user who was just speaking
-        # to prevent immediate re-triggering from latent audio.
+        # TOCTOU Fix: Thread-safe wake word buffer cleanup
         authority_user_id = self._bot_state.authority_user_id
-        if isinstance(authority_user_id, int):
-            if authority_user_id in self._detectors:
-                self._detectors[authority_user_id].reset()
-            if authority_user_id in self._user_audio_buffers:
-                self._user_audio_buffers[authority_user_id].clear()
-            if authority_user_id in self._ww_resampled_buffers:
-                self._ww_resampled_buffers[authority_user_id].clear()
-            if authority_user_id in self._ww_resample_state:
-                self._ww_resample_state[authority_user_id] = None
+        if isinstance(authority_user_id, int) and authority_user_id in self._ww_buffer_locks:
+            with self._ww_buffer_locks[authority_user_id]:
+                if authority_user_id in self._detectors:
+                    self._detectors[authority_user_id].reset()
+                if authority_user_id in self._user_audio_buffers:
+                    self._user_audio_buffers[authority_user_id].clear()
+                if authority_user_id in self._ww_resampled_buffers:
+                    self._ww_resampled_buffers[authority_user_id].clear()
+                if authority_user_id in self._ww_resample_state:
+                    self._ww_resample_state[authority_user_id] = None
 
-        self._authority_buffer.clear()
-        self._vad_raw_buffer.clear()
-        self._vad_resampled_buffer.clear()
-        self._vad_resample_state = None
-        if self._vad_analyzer:
-            self._vad_analyzer.reset()
         logger.info(f"PTT recording stopped, returning {len(audio_data)} bytes.")
         return audio_data
 
@@ -529,10 +547,12 @@ class ManualControlSink(AudioSink):
                 if not self._is_vad_enabled:
                     continue
 
-                if self._has_received_audio_for_vad:
-                    # Audio was received in the last interval, reset flag and wait.
-                    self._has_received_audio_for_vad = False
-                else:
+                # VAD flag race fix: Thread-safe flag check and reset
+                with self._vad_flag_lock:
+                    has_received_audio = self._has_received_audio_for_vad
+                    self._has_received_audio_for_vad = False  # Reset atomically
+
+                if not has_received_audio:
                     # No audio received, inject silence into the VAD process.
                     await self._process_vad_async(self._silence_chunk_vad)
         except asyncio.CancelledError:
@@ -585,29 +605,31 @@ class ManualControlSink(AudioSink):
         This prevents blocking and maintains responsiveness.
         """
         self.enable_vad(False)
-        audio_data = bytes(self._authority_buffer)
+        
+        # TOCTOU Fix: Atomic buffer capture and cleanup 
+        with self._authority_buffer_lock:
+            if not self._authority_buffer:  # Already processed by another callback
+                return
+            audio_data = bytes(self._authority_buffer)
+            self._authority_buffer.clear()
+            self._vad_raw_buffer.clear()
+            self._vad_resampled_buffer.clear()
+            self._vad_resample_state = None
+            if self._vad_analyzer:
+                self._vad_analyzer.reset()
 
-        # Clear the wake-word buffer for the user who was just speaking
-        # to prevent immediate re-triggering from latent audio.
-        # This is done before the callback to ensure we have the correct user ID.
+        # TOCTOU Fix: Thread-safe wake word buffer cleanup
         authority_user_id = self._bot_state.authority_user_id
-        if isinstance(authority_user_id, int):
-            if authority_user_id in self._detectors:
-                self._detectors[authority_user_id].reset()
-            if authority_user_id in self._user_audio_buffers:
-                self._user_audio_buffers[authority_user_id].clear()
-            if authority_user_id in self._ww_resampled_buffers:
-                self._ww_resampled_buffers[authority_user_id].clear()
-            if authority_user_id in self._ww_resample_state:
-                self._ww_resample_state[authority_user_id] = None
-
-        # Immediately clear all recording-related buffers and state.
-        self._authority_buffer.clear()
-        self._vad_raw_buffer.clear()
-        self._vad_resampled_buffer.clear()
-        self._vad_resample_state = None
-        if self._vad_analyzer:
-            self._vad_analyzer.reset()
+        if isinstance(authority_user_id, int) and authority_user_id in self._ww_buffer_locks:
+            with self._ww_buffer_locks[authority_user_id]:
+                if authority_user_id in self._detectors:
+                    self._detectors[authority_user_id].reset()
+                if authority_user_id in self._user_audio_buffers:
+                    self._user_audio_buffers[authority_user_id].clear()
+                if authority_user_id in self._ww_resampled_buffers:
+                    self._ww_resampled_buffers[authority_user_id].clear()
+                if authority_user_id in self._ww_resample_state:
+                    self._ww_resample_state[authority_user_id] = None
 
         # Schedule the callback to run in the background instead of awaiting it.
         # This prevents blocking the sink and avoids state inconsistencies.
@@ -707,20 +729,26 @@ class ManualControlSink(AudioSink):
 
         if self._bot_state.current_state == BotStateEnum.RECORDING:
             if self._bot_state.is_authorized(user):
-                # Always buffer audio when in any recording state
-                self._authority_buffer.extend(data.pcm)
-                logger.debug(f"Authority buffer size: {len(self._authority_buffer)}")
-
-                # Conditionally process VAD only for wake word recordings
-                if (
-                    self._bot_state.recording_method == RecordingMethod.WakeWord
-                    and self._is_vad_enabled
-                ):
-                    self._has_received_audio_for_vad = True
-                    # Schedule VAD processing on the event loop to avoid race conditions
-                    asyncio.run_coroutine_threadsafe(
-                        self._process_vad_async(data.pcm), self._loop
-                    )
+                # TOCTOU Fix: Atomic check-and-write operation
+                with self._authority_buffer_lock:
+                    # Re-check state inside the lock to ensure atomicity
+                    if (self._bot_state.current_state == BotStateEnum.RECORDING 
+                        and self._bot_state.is_authorized(user)):
+                        self._authority_buffer.extend(data.pcm)
+                        logger.debug(f"Authority buffer size: {len(self._authority_buffer)}")
+                        
+                        # Conditionally process VAD only for wake word recordings
+                        if (
+                            self._bot_state.recording_method == RecordingMethod.WakeWord
+                            and self._is_vad_enabled
+                        ):
+                            # VAD flag race fix: Thread-safe flag update
+                            with self._vad_flag_lock:
+                                self._has_received_audio_for_vad = True
+                            # Schedule VAD processing on the event loop to avoid race conditions
+                            asyncio.run_coroutine_threadsafe(
+                                self._process_vad_async(data.pcm), self._loop
+                            )
         elif (
             self._bot_state.current_state == BotStateEnum.STANDBY
             and user.id in self._detectors
@@ -736,13 +764,18 @@ class ManualControlSink(AudioSink):
         - Processing audio through openWakeWord models for detection
         - Handling wake word detection events and state cleanup
         """
-        self._user_audio_buffers[user.id].extend(data.pcm)
-        buffer = self._user_audio_buffers[user.id]
-        logger.debug(f"User {user.id} buffer size: {len(buffer)}")
-        # Process in chunks large enough for at least one resample operation
-        # 7680 bytes of 48kHz stereo -> 1920 frames -> 640 frames @ 16kHz mono -> 1280 bytes
-        min_raw_bytes = 7680
-        if len(buffer) >= min_raw_bytes:
+        # CONCURRENCY FIX: Use dedicated lock for all user data access
+        with self._user_data_lock:
+            # Check if user was removed during processing
+            if user.id not in self._detectors:
+                return  # User was removed, skip processing
+            self._user_audio_buffers[user.id].extend(data.pcm)
+            buffer = self._user_audio_buffers[user.id]
+            logger.debug(f"User {user.id} buffer size: {len(buffer)}")
+            
+            # Process in chunks large enough for at least one resample operation
+            # 7680 bytes of 48kHz stereo -> 1920 frames -> 640 frames @ 16kHz mono -> 1280 bytes
+            min_raw_bytes = 7680
             processed_bytes = 0
             resampled_buffer = self._ww_resampled_buffers[user.id]
             while len(buffer) - processed_bytes >= min_raw_bytes:

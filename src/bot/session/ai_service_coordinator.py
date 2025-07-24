@@ -53,23 +53,27 @@ class AIServiceCoordinator:
 
     async def cancel_ongoing_response(self) -> bool:
         """Cancels any ongoing response from the AI service."""
-        if self.is_connected() and self.active_ai_service_manager:
-            return await self.active_ai_service_manager.cancel_ongoing_response()
+        # AI connection state TOCTOU fix: Capture manager atomically
+        manager = self.active_ai_service_manager
+        if self.is_connected() and manager:
+            return await manager.cancel_ongoing_response()
         return False
 
     async def send_audio_turn(self, pcm_data: bytes) -> bool:
         """Sends a full audio turn (chunk + finalize) to the AI service."""
-        if not self.is_connected() or not self.active_ai_service_manager:
+        # AI connection state TOCTOU fix: Capture manager atomically to prevent race
+        manager = self.active_ai_service_manager
+        if not self.is_connected() or not manager:
             logger.error(f"Cannot send audio for guild {self.guild_id}: Not connected.")
             return False
 
-        if not await self.active_ai_service_manager.send_audio_chunk(pcm_data):
+        if not await manager.send_audio_chunk(pcm_data):
             logger.error(
                 f"Failed to send audio chunk to AI service for guild {self.guild_id}."
             )
             return False
 
-        if not await self.active_ai_service_manager.finalize_input_and_request_response():
+        if not await manager.finalize_input_and_request_response():
             logger.error(
                 f"Failed to finalize input for AI service for guild {self.guild_id}."
             )
@@ -82,13 +86,15 @@ class AIServiceCoordinator:
 
     async def shutdown(self) -> None:
         """Shuts down the connection to the current AI provider."""
-        if self.active_ai_service_manager and self.is_connected():
+        # AI connection state TOCTOU fix: Capture manager atomically
+        manager = self.active_ai_service_manager
+        if manager and self.is_connected():
             provider_name = self.bot_state.active_ai_provider_name
             logger.info(
                 f"Shutting down AI provider '{provider_name}' for guild {self.guild_id}"
             )
             await self.cancel_ongoing_response()
-            await self.active_ai_service_manager.disconnect()
+            await manager.disconnect()
             logger.info(f"Disconnected from {provider_name} for guild {self.guild_id}.")
         self.active_ai_service_manager = None
 

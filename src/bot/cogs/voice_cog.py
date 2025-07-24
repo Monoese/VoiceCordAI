@@ -8,6 +8,7 @@ bot to support concurrent voice sessions across multiple guilds.
 """
 
 import asyncio
+from collections import defaultdict
 from typing import Dict
 
 import discord
@@ -46,6 +47,7 @@ class VoiceCog(commands.Cog):
         self.bot = bot
         self.ai_service_factories = ai_service_factories
         self._sessions: Dict[int, GuildSession] = {}
+        self._session_locks: Dict[int, asyncio.Lock] = defaultdict(asyncio.Lock)
         logger.info("VoiceCog initialized.")
 
     def _get_or_create_session(self, guild: discord.Guild) -> GuildSession:
@@ -156,20 +158,22 @@ class VoiceCog(commands.Cog):
             await ctx.send("This command can only be used in a server.")
             return
 
-        if ctx.guild.id in self._sessions:
-            await ctx.send(
-                "I'm already in a session in this server. Use `/disconnect` to end it first."
-            )
-            return
-
-        session = self._get_or_create_session(ctx.guild)
-        success = await session.initialize_session(ctx, BotModeEnum.ManualControl)
-        if not success:
-            logger.warning(
-                f"Manual connection process failed for guild {ctx.guild.id}. Cleaning up session."
-            )
+        # CONCURRENCY FIX: Atomic session operations per guild
+        async with self._session_locks[ctx.guild.id]:
             if ctx.guild.id in self._sessions:
-                del self._sessions[ctx.guild.id]
+                await ctx.send(
+                    "I'm already in a session in this server. Use `/disconnect` to end it first."
+                )
+                return
+
+            session = self._get_or_create_session(ctx.guild)
+            success = await session.initialize_session(ctx, BotModeEnum.ManualControl)
+            if not success:
+                logger.warning(
+                    f"Manual connection process failed for guild {ctx.guild.id}. Cleaning up session."
+                )
+                if ctx.guild.id in self._sessions:
+                    del self._sessions[ctx.guild.id]
 
     @commands.command(name="realtime_connect")
     async def connect_realtime_command(self, ctx: commands.Context) -> None:
@@ -185,20 +189,22 @@ class VoiceCog(commands.Cog):
             await ctx.send("This command can only be used in a server.")
             return
 
-        if ctx.guild.id in self._sessions:
-            await ctx.send(
-                "I'm already in a session in this server. Use `/disconnect` to end it first."
-            )
-            return
-
-        session = self._get_or_create_session(ctx.guild)
-        success = await session.initialize_session(ctx, BotModeEnum.RealtimeTalk)
-        if not success:
-            logger.warning(
-                f"Realtime connection process failed for guild {ctx.guild.id}. Cleaning up session."
-            )
+        # CONCURRENCY FIX: Atomic session operations per guild
+        async with self._session_locks[ctx.guild.id]:
             if ctx.guild.id in self._sessions:
-                del self._sessions[ctx.guild.id]
+                await ctx.send(
+                    "I'm already in a session in this server. Use `/disconnect` to end it first."
+                )
+                return
+
+            session = self._get_or_create_session(ctx.guild)
+            success = await session.initialize_session(ctx, BotModeEnum.RealtimeTalk)
+            if not success:
+                logger.warning(
+                    f"Realtime connection process failed for guild {ctx.guild.id}. Cleaning up session."
+                )
+                if ctx.guild.id in self._sessions:
+                    del self._sessions[ctx.guild.id]
 
     @commands.command(name="set")
     async def set_provider_command(
@@ -243,28 +249,31 @@ class VoiceCog(commands.Cog):
             await ctx.send("This command can only be used in a server.")
             return
 
-        session = self._sessions.get(ctx.guild.id)
-        if not session:
-            await ctx.send("The bot is not currently in a session in this server.")
-            return
+        # CONCURRENCY FIX: Atomic session operations per guild
+        async with self._session_locks[ctx.guild.id]:
+            session = self._sessions.get(ctx.guild.id)
+            if not session:
+                await ctx.send("The bot is not currently in a session in this server.")
+                return
 
-        await ctx.send("Session terminating...")
-        try:
-            await session.cleanup()
-            await ctx.send("Session terminated successfully.")
-        except Exception as e:
-            logger.error(
-                f"An error occurred during session cleanup for guild {ctx.guild.id}: {e}",
-                exc_info=True,
-            )
-            await ctx.send(
-                "An error occurred during cleanup. The session has been forcefully removed."
-            )
-        finally:
-            del self._sessions[ctx.guild.id]
-            logger.info(
-                f"Session for guild {ctx.guild.id} has been fully cleaned up and removed."
-            )
+            await ctx.send("Session terminating...")
+            try:
+                await session.cleanup()
+                await ctx.send("Session terminated successfully.")
+            except Exception as e:
+                logger.error(
+                    f"An error occurred during session cleanup for guild {ctx.guild.id}: {e}",
+                    exc_info=True,
+                )
+                await ctx.send(
+                    "An error occurred during cleanup. The session has been forcefully removed."
+                )
+            finally:
+                if ctx.guild.id in self._sessions:
+                    del self._sessions[ctx.guild.id]
+                logger.info(
+                    f"Session for guild {ctx.guild.id} has been fully cleaned up and removed."
+                )
 
 
 async def setup(bot: commands.Bot) -> None:
