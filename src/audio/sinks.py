@@ -363,12 +363,18 @@ class ManualControlSink(AudioSink):
         self._ww_resample_state: Dict[int, Optional[any]] = {}
         self._ww_resampled_buffers: Dict[int, bytearray] = {}
         self._vad_resample_state = None
-        
+
         # Thread-safe synchronization primitives for TOCTOU fix
-        self._authority_buffer_lock = threading.Lock()  # Protects authority audio buffer operations
-        self._ww_buffer_locks: Dict[int, threading.Lock] = {}  # Per-user wake word buffer protection
+        self._authority_buffer_lock = (
+            threading.Lock()
+        )  # Protects authority audio buffer operations
+        self._ww_buffer_locks: Dict[
+            int, threading.Lock
+        ] = {}  # Per-user wake word buffer protection
         self._vad_flag_lock = threading.Lock()  # Protects VAD flag updates
-        self._user_data_lock = threading.Lock()  # CONCURRENCY FIX: Protects all user data dictionaries
+        self._user_data_lock = (
+            threading.Lock()
+        )  # CONCURRENCY FIX: Protects all user data dictionaries
         self._is_vad_enabled = False
         self._vad_grace_period_frames = (
             Config.VAD_GRACE_PERIOD_MS // 20
@@ -410,7 +416,9 @@ class ManualControlSink(AudioSink):
                 self._user_audio_buffers[user_id] = bytearray()
                 self._ww_resampled_buffers[user_id] = bytearray()
                 self._ww_resample_state[user_id] = None
-                self._ww_buffer_locks[user_id] = threading.Lock()  # Create per-user lock
+                self._ww_buffer_locks[user_id] = (
+                    threading.Lock()
+                )  # Create per-user lock
         except Exception as e:
             logger.error(
                 f"Failed to initialize wake word model for user {user_id}: {e}",
@@ -421,7 +429,7 @@ class ManualControlSink(AudioSink):
         if user_id not in self._detectors:
             return
         logger.info(f"Removing user {user_id} from ManualControlSink detectors.")
-        
+
         # CONCURRENCY FIX: Use dedicated lock for all user data operations
         with self._user_data_lock:
             # Clean up all user data atomically
@@ -429,7 +437,9 @@ class ManualControlSink(AudioSink):
             self._user_audio_buffers.pop(user_id, None)
             self._ww_resample_state.pop(user_id, None)
             self._ww_resampled_buffers.pop(user_id, None)
-            self._ww_buffer_locks.pop(user_id, None)  # Safe to delete after data cleanup
+            self._ww_buffer_locks.pop(
+                user_id, None
+            )  # Safe to delete after data cleanup
 
     def cleanup(self) -> None:
         logger.info("Cleaning up ManualControlSink.")
@@ -484,7 +494,7 @@ class ManualControlSink(AudioSink):
             bytes: The captured audio data in Discord's native PCM format
         """
         self.enable_vad(False)
-        
+
         # TOCTOU Fix: Atomic authority buffer capture and clear
         with self._authority_buffer_lock:
             audio_data = bytes(self._authority_buffer)
@@ -497,7 +507,10 @@ class ManualControlSink(AudioSink):
 
         # TOCTOU Fix: Thread-safe wake word buffer cleanup
         authority_user_id = self._bot_state.authority_user_id
-        if isinstance(authority_user_id, int) and authority_user_id in self._ww_buffer_locks:
+        if (
+            isinstance(authority_user_id, int)
+            and authority_user_id in self._ww_buffer_locks
+        ):
             with self._ww_buffer_locks[authority_user_id]:
                 if authority_user_id in self._detectors:
                     self._detectors[authority_user_id].reset()
@@ -605,8 +618,8 @@ class ManualControlSink(AudioSink):
         This prevents blocking and maintains responsiveness.
         """
         self.enable_vad(False)
-        
-        # TOCTOU Fix: Atomic buffer capture and cleanup 
+
+        # TOCTOU Fix: Atomic buffer capture and cleanup
         with self._authority_buffer_lock:
             if not self._authority_buffer:  # Already processed by another callback
                 return
@@ -620,7 +633,10 @@ class ManualControlSink(AudioSink):
 
         # TOCTOU Fix: Thread-safe wake word buffer cleanup
         authority_user_id = self._bot_state.authority_user_id
-        if isinstance(authority_user_id, int) and authority_user_id in self._ww_buffer_locks:
+        if (
+            isinstance(authority_user_id, int)
+            and authority_user_id in self._ww_buffer_locks
+        ):
             with self._ww_buffer_locks[authority_user_id]:
                 if authority_user_id in self._detectors:
                     self._detectors[authority_user_id].reset()
@@ -732,11 +748,15 @@ class ManualControlSink(AudioSink):
                 # TOCTOU Fix: Atomic check-and-write operation
                 with self._authority_buffer_lock:
                     # Re-check state inside the lock to ensure atomicity
-                    if (self._bot_state.current_state == BotStateEnum.RECORDING 
-                        and self._bot_state.is_authorized(user)):
+                    if (
+                        self._bot_state.current_state == BotStateEnum.RECORDING
+                        and self._bot_state.is_authorized(user)
+                    ):
                         self._authority_buffer.extend(data.pcm)
-                        logger.debug(f"Authority buffer size: {len(self._authority_buffer)}")
-                        
+                        logger.debug(
+                            f"Authority buffer size: {len(self._authority_buffer)}"
+                        )
+
                         # Conditionally process VAD only for wake word recordings
                         if (
                             self._bot_state.recording_method == RecordingMethod.WakeWord
@@ -772,7 +792,7 @@ class ManualControlSink(AudioSink):
             self._user_audio_buffers[user.id].extend(data.pcm)
             buffer = self._user_audio_buffers[user.id]
             logger.debug(f"User {user.id} buffer size: {len(buffer)}")
-            
+
             # Process in chunks large enough for at least one resample operation
             # 7680 bytes of 48kHz stereo -> 1920 frames -> 640 frames @ 16kHz mono -> 1280 bytes
             min_raw_bytes = 7680

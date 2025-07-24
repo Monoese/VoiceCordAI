@@ -287,7 +287,7 @@ class GuildSession:
         """Task to process a finished audio recording from ManualControl mode."""
         # Cross-session corruption fix: Capture session ID at start of processing
         session_id = self.bot_state.current_session_id
-        
+
         try:
             # Get the audio format required by the active AI service
             target_format = self.ai_coordinator.get_processing_audio_format()
@@ -324,11 +324,11 @@ class GuildSession:
     async def _safe_enter_error_state(self, original_session_id: int) -> None:
         """
         Safely enter error state only if the session hasn't changed.
-        
+
         This prevents background tasks from corrupting unrelated new sessions.
         Only enters error state if we're still processing the same session
         that this background task was created for.
-        
+
         Args:
             original_session_id: The session ID when this background task started
         """
@@ -395,16 +395,16 @@ class GuildSession:
             return
 
         logger.info(f"Switching mode to {new_mode.value}")
-        
+
         # Mode switch race fix: Ensure proper cleanup coordination
         async with self._action_lock:
             # Cleanup old sink with coordination
             if self._audio_sink:
                 # First, stop voice connection from sending more audio to sink
                 self.voice_connection.stop_listening()
-                
+
                 # Now cleanup the sink safely
-                if hasattr(self._audio_sink, 'cleanup'):
+                if hasattr(self._audio_sink, "cleanup"):
                     self._audio_sink.cleanup()
                 self._audio_sink = None
 
