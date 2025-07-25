@@ -86,3 +86,9 @@ class ValidationError(VoiceCordAIError):
     """Raised when input validation fails."""
 
     pass
+
+
+class StateTransitionError(VoiceCordAIError):
+    """Raised when an invalid state transition is attempted."""
+
+    pass

@@ -187,11 +187,20 @@ class BotState:
 
     async def _set_state(self, new_state: BotStateEnum) -> bool:
         """Atomically sets a new state and notifies listeners."""
+        # Import here to avoid circular imports
+        from .state_validator import StateTransitionValidator
+        
+        # Enforce state transition validation
+        StateTransitionValidator.validate(self._current_state, new_state)
+        
         if self._current_state == new_state:
             return False
 
         old_state = self._current_state
         self._current_state = new_state
+        
+        # Log successful state transition for debugging
+        logger.debug(f"State transitioned from {old_state.value} to {new_state.value}")
 
         event = StateChangedEvent(old_state=old_state, new_state=new_state)
         await self._notify_listeners(event)

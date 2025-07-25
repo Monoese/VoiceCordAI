@@ -16,7 +16,7 @@ from discord.ext import commands
 
 from src.bot.session.guild_session import GuildSession
 from src.bot.state import BotModeEnum
-from src.exceptions import SessionError
+from src.exceptions import SessionError, StateTransitionError
 from src.utils.logger import get_logger
 
 
@@ -124,7 +124,17 @@ class VoiceCog(commands.Cog):
 
         session = self._sessions.get(reaction.message.guild.id)
         if session:
-            await session.handle_reaction_add(reaction, user)
+            try:
+                await session.handle_reaction_add(reaction, user)
+            except StateTransitionError as e:
+                logger.critical(
+                    f"Caught unrecoverable state error in guild {reaction.message.guild.id} during reaction add: {e}", 
+                    exc_info=True
+                )
+                # Clean up the session and notify users
+                await session.cleanup()
+                if reaction.message.guild.id in self._sessions:
+                    del self._sessions[reaction.message.guild.id]
 
     @commands.Cog.listener()
     async def on_reaction_remove(
@@ -142,7 +152,17 @@ class VoiceCog(commands.Cog):
 
         session = self._sessions.get(reaction.message.guild.id)
         if session:
-            await session.handle_reaction_remove(reaction, user)
+            try:
+                await session.handle_reaction_remove(reaction, user)
+            except StateTransitionError as e:
+                logger.critical(
+                    f"Caught unrecoverable state error in guild {reaction.message.guild.id} during reaction remove: {e}", 
+                    exc_info=True
+                )
+                # Clean up the session and notify users
+                await session.cleanup()
+                if reaction.message.guild.id in self._sessions:
+                    del self._sessions[reaction.message.guild.id]
 
     @commands.command(name="connect", aliases=["manual_connect"])
     async def connect_manual_command(self, ctx: commands.Context) -> None:
@@ -168,11 +188,21 @@ class VoiceCog(commands.Cog):
                 return
 
             session = self._get_or_create_session(ctx.guild)
-            success = await session.initialize_session(ctx, BotModeEnum.ManualControl)
-            if not success:
-                logger.warning(
-                    f"Manual connection process failed for guild {ctx.guild.id}. Cleaning up session."
+            try:
+                success = await session.initialize_session(ctx, BotModeEnum.ManualControl)
+                if not success:
+                    logger.warning(
+                        f"Manual connection process failed for guild {ctx.guild.id}. Cleaning up session."
+                    )
+                    if ctx.guild.id in self._sessions:
+                        del self._sessions[ctx.guild.id]
+            except StateTransitionError as e:
+                logger.critical(
+                    f"Caught unrecoverable state error in guild {ctx.guild.id} during manual connect: {e}", 
+                    exc_info=True
                 )
+                await ctx.send("An unexpected internal error occurred. The session will now terminate.")
+                await session.cleanup()
                 if ctx.guild.id in self._sessions:
                     del self._sessions[ctx.guild.id]
 
@@ -199,11 +229,21 @@ class VoiceCog(commands.Cog):
                 return
 
             session = self._get_or_create_session(ctx.guild)
-            success = await session.initialize_session(ctx, BotModeEnum.RealtimeTalk)
-            if not success:
-                logger.warning(
-                    f"Realtime connection process failed for guild {ctx.guild.id}. Cleaning up session."
+            try:
+                success = await session.initialize_session(ctx, BotModeEnum.RealtimeTalk)
+                if not success:
+                    logger.warning(
+                        f"Realtime connection process failed for guild {ctx.guild.id}. Cleaning up session."
+                    )
+                    if ctx.guild.id in self._sessions:
+                        del self._sessions[ctx.guild.id]
+            except StateTransitionError as e:
+                logger.critical(
+                    f"Caught unrecoverable state error in guild {ctx.guild.id} during realtime connect: {e}", 
+                    exc_info=True
                 )
+                await ctx.send("An unexpected internal error occurred. The session will now terminate.")
+                await session.cleanup()
                 if ctx.guild.id in self._sessions:
                     del self._sessions[ctx.guild.id]
 
@@ -232,7 +272,17 @@ class VoiceCog(commands.Cog):
             )
             return
 
-        await session.set_provider(ctx, provider_name)
+        try:
+            await session.set_provider(ctx, provider_name)
+        except StateTransitionError as e:
+            logger.critical(
+                f"Caught unrecoverable state error in guild {ctx.guild.id} during set provider: {e}", 
+                exc_info=True
+            )
+            await ctx.send("An unexpected internal error occurred. The session will now terminate.")
+            await session.cleanup()
+            if ctx.guild.id in self._sessions:
+                del self._sessions[ctx.guild.id]
 
     @commands.command(name="disconnect")
     async def disconnect_command(self, ctx: commands.Context) -> None:
@@ -261,6 +311,12 @@ class VoiceCog(commands.Cog):
             try:
                 await session.cleanup()
                 await ctx.send("Session terminated successfully.")
+            except StateTransitionError as e:
+                logger.critical(
+                    f"Caught unrecoverable state error in guild {ctx.guild.id} during disconnect: {e}", 
+                    exc_info=True
+                )
+                await ctx.send("An unexpected internal error occurred during cleanup. The session has been forcefully removed.")
             except SessionError as e:
                 logger.error(
                     f"Session error during cleanup for guild {ctx.guild.id}: {e}",
