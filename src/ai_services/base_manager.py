@@ -14,6 +14,7 @@ from typing import Any, Awaitable, Callable, Dict, Protocol
 
 from src.ai_services.interface import IRealtimeAIServiceManager
 from src.audio.playback import AudioPlaybackManager
+from src.exceptions import AIAuthenticationError, AIModelError
 from src.utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -66,11 +67,13 @@ class BaseRealtimeManager(IRealtimeAIServiceManager):
         super().__init__(audio_playback_manager, service_config)
         self._api_key: str = self._service_config.get("api_key")
         if not self._api_key:
-            raise ValueError("API key is missing in the service configuration.")
+            raise AIAuthenticationError(
+                "API key is missing in the service configuration."
+            )
 
         self._model_name: str = self._service_config.get("model_name")
         if not self._model_name:
-            raise ValueError("Model name is missing in the service configuration.")
+            raise AIModelError("Model name is missing in the service configuration.")
 
     @property
     @abstractmethod

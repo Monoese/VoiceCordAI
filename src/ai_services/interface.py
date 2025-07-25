@@ -9,6 +9,7 @@ through a common set of methods.
 from abc import ABC, abstractmethod
 from typing import Any, Dict, Tuple, Callable, Awaitable
 from src.audio.playback import AudioPlaybackManager
+from src.exceptions import ValidationError
 
 
 class IRealtimeAIServiceManager(ABC):
@@ -48,15 +49,20 @@ class IRealtimeAIServiceManager(ABC):
         # --- Audio Format Configuration ---
         # Directly access configuration keys. A KeyError will be raised if a key is
         # missing, which indicates a configuration error that should be fixed.
-        self._processing_audio_format: Tuple[int, int] = (
-            service_config["processing_audio_frame_rate"],
-            service_config["processing_audio_channels"],
-        )
+        try:
+            self._processing_audio_format: Tuple[int, int] = (
+                service_config["processing_audio_frame_rate"],
+                service_config["processing_audio_channels"],
+            )
 
-        self._response_audio_format: Tuple[int, int] = (
-            service_config["response_audio_frame_rate"],
-            service_config["response_audio_channels"],
-        )
+            self._response_audio_format: Tuple[int, int] = (
+                service_config["response_audio_frame_rate"],
+                service_config["response_audio_channels"],
+            )
+        except KeyError as e:
+            raise ValidationError(
+                f"Missing required audio format configuration: {e}"
+            ) from e
 
     @property
     def processing_audio_format(self) -> Tuple[int, int]:

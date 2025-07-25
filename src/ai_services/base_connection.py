@@ -10,6 +10,7 @@ import asyncio
 from abc import ABC, abstractmethod
 from typing import Callable, Awaitable, Any, Optional
 
+from src.exceptions import AIConnectionError
 from src.utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -109,9 +110,14 @@ class BaseConnectionHandler(ABC):
                 logger.info(
                     f"{class_name}: Event stream ended. Connection likely closed by server."
                 )
+            except AIConnectionError as e:
+                logger.error(
+                    f"{class_name} AI connection error: {e}. Will attempt to reconnect.",
+                    exc_info=True,
+                )
             except Exception as e:
                 logger.error(
-                    f"{class_name} connection error: {e}. Will attempt to reconnect.",
+                    f"{class_name} unexpected connection error: {e}. Will attempt to reconnect.",
                     exc_info=True,
                 )
             finally:

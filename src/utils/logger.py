@@ -10,7 +10,8 @@ import sys
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
-from src.config.config import Config, ConfigError
+from src.config.config import Config
+from src.exceptions import ConfigurationError
 
 logs_dir: Path = Path(Config.BASE_DIR) / "logs"
 logs_dir.mkdir(exist_ok=True)
@@ -55,7 +56,7 @@ def _configure_root_logger() -> None:
     except Exception as e:
         # Fallback error handler for unexpected issues during logger setup.
         print(f"CRITICAL: Logger setup failed unexpectedly: {e}", file=sys.stderr)
-        raise ConfigError(f"Logger setup failed: {e}") from e
+        raise ConfigurationError(f"Logger setup failed: {e}") from e
 
     root_logger.setLevel(log_level)
 

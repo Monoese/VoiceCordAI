@@ -10,6 +10,7 @@ from discord.ext import voice_recv
 from pydub import AudioSegment
 
 from src.config.config import Config
+from src.exceptions import AudioProcessingError
 from src.utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -110,9 +111,14 @@ class AudioPlaybackManager:
             cue_audio.export(buffer, format="raw")
             await self.add_audio_chunk(buffer.getvalue())
 
+        except AudioProcessingError as e:
+            logger.error(
+                f"Audio processing error with cue file {cue_name}: {e}", exc_info=True
+            )
         except Exception as e:
             logger.error(
-                f"Error processing audio cue file {cue_name}: {e}", exc_info=True
+                f"Unexpected error processing audio cue file {cue_name}: {e}",
+                exc_info=True,
             )
         finally:
             # Signal the end of this specific cue stream so the manager can clean it up

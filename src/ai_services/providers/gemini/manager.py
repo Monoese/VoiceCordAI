@@ -13,6 +13,7 @@ from google.genai import types
 
 from src.ai_services.base_manager import BaseRealtimeManager
 from src.audio.playback import AudioPlaybackManager
+from src.exceptions import AIServiceError
 from src.utils.logger import get_logger
 
 from .event_handler import GeminiEventHandlerAdapter
@@ -127,9 +128,16 @@ class GeminiRealtimeManager(BaseRealtimeManager):
                 f"Sent audio chunk ({len(audio_data)} bytes) as Blob with MIME type '{mime_type}' to Gemini."
             )
             return True
+        except AIServiceError as e:
+            logger.error(
+                f"GeminiRealtimeManager: AI service error sending audio chunk: {e}",
+                exc_info=True,
+            )
+            return False
         except Exception as e:
             logger.error(
-                f"GeminiRealtimeManager: Error sending audio chunk: {e}", exc_info=True
+                f"GeminiRealtimeManager: Unexpected error sending audio chunk: {e}",
+                exc_info=True,
             )
             return False
 

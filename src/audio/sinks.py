@@ -29,7 +29,7 @@ logger = get_logger(__name__)
 
 class CleanupMetrics:
     """Tracks cleanup operations and race condition prevention."""
-    
+
     def __init__(self):
         self.comprehensive_cleanups = 0
         self.race_conditions_prevented = 0
@@ -37,37 +37,40 @@ class CleanupMetrics:
         self.zero_byte_recordings_prevented = 0
         self.successful_interactions = 0
         self.last_successful_cleanup = time.time()
-        
+
     def record_comprehensive_cleanup(self, stats: Dict[str, int]):
         """Record results of comprehensive cleanup operation."""
         self.comprehensive_cleanups += 1
-        self.cleanup_errors += stats.get('errors', 0)
+        self.cleanup_errors += stats.get("errors", 0)
         self.last_successful_cleanup = time.time()
-        
-        if stats.get('buffers_cleared', 0) > 0:
+
+        if stats.get("buffers_cleared", 0) > 0:
             logger.info(f"Comprehensive cleanup cleared stale data: {stats}")
-            
+
     def record_race_condition_prevention(self, captured_id, current_id):
         """Track when race condition would have occurred but was prevented."""
         if captured_id != current_id:
             self.race_conditions_prevented += 1
-            logger.warning(f"Race condition prevented: captured={captured_id}, current={current_id}")
-            
+            logger.warning(
+                f"Race condition prevented: captured={captured_id}, current={current_id}"
+            )
+
     def record_successful_interaction(self, audio_size: int):
         """Track successful audio interactions."""
         self.successful_interactions += 1
         if audio_size > 0:
             logger.debug(f"Successful interaction recorded: {audio_size} bytes")
-            
+
     def export_health_report(self) -> Dict[str, Any]:
         """Export comprehensive health metrics for monitoring."""
         return {
-            'total_cleanups': self.comprehensive_cleanups,
-            'race_conditions_prevented': self.race_conditions_prevented,
-            'cleanup_error_rate': self.cleanup_errors / max(1, self.comprehensive_cleanups),
-            'successful_interactions': self.successful_interactions,
-            'time_since_last_cleanup': time.time() - self.last_successful_cleanup,
-            'health_status': 'healthy' if self.cleanup_errors == 0 else 'degraded'
+            "total_cleanups": self.comprehensive_cleanups,
+            "race_conditions_prevented": self.race_conditions_prevented,
+            "cleanup_error_rate": self.cleanup_errors
+            / max(1, self.comprehensive_cleanups),
+            "successful_interactions": self.successful_interactions,
+            "time_since_last_cleanup": time.time() - self.last_successful_cleanup,
+            "health_status": "healthy" if self.cleanup_errors == 0 else "degraded",
         }
 
 
@@ -156,6 +159,9 @@ class VADAnalyzer:
 
     def process(self, frame: bytes):
         if len(frame) != self._frame_bytes:
+            logger.debug(
+                f"Invalid VAD frame size: expected {self._frame_bytes}, got {len(frame)}"
+            )
             return
         self._frames_processed += 1
         is_speech = self._vad.is_speech(frame, self._sample_rate)
@@ -511,54 +517,60 @@ class ManualControlSink(AudioSink):
     def _clear_all_wake_word_buffers(self) -> None:
         """
         Comprehensive cleanup method to clear all wake word buffers for all users.
-        
+
         This method ensures a complete "clean slate" state between recording interactions,
         eliminating any possibility of stale audio data corruption. It's more robust than
         individual user cleanup as it handles edge cases like non-authority user state
         corruption.
-        
+
         Thread Safety: Uses _user_data_lock to ensure atomic cleanup operations.
         """
         logger.debug("Starting comprehensive wake word buffer cleanup for all users")
-        
+
         cleanup_stats = {
-            'models_reset': 0,
-            'buffers_cleared': 0,
-            'states_reset': 0,
-            'errors': 0
+            "models_reset": 0,
+            "buffers_cleared": 0,
+            "states_reset": 0,
+            "errors": 0,
         }
-        
+
         with self._user_data_lock:
             # Reset all wake word models
             for user_id, model in self._detectors.items():
                 try:
                     model.reset()
-                    cleanup_stats['models_reset'] += 1
+                    cleanup_stats["models_reset"] += 1
                     logger.debug(f"Reset wake word model for user {user_id}")
                 except Exception as e:
-                    cleanup_stats['errors'] += 1
-                    logger.error(f"Failed to reset wake word model for user {user_id}: {e}")
-            
+                    cleanup_stats["errors"] += 1
+                    logger.error(
+                        f"Failed to reset wake word model for user {user_id}: {e}"
+                    )
+
             # Clear all user audio buffers
             for user_id in list(self._user_audio_buffers.keys()):
                 buffer_size = len(self._user_audio_buffers[user_id])
                 self._user_audio_buffers[user_id].clear()
-                cleanup_stats['buffers_cleared'] += 1
+                cleanup_stats["buffers_cleared"] += 1
                 if buffer_size > 0:
-                    logger.debug(f"Cleared {buffer_size} bytes from user {user_id} audio buffer")
-                
+                    logger.debug(
+                        f"Cleared {buffer_size} bytes from user {user_id} audio buffer"
+                    )
+
             # Clear all resampled buffers
             for user_id in list(self._ww_resampled_buffers.keys()):
                 buffer_size = len(self._ww_resampled_buffers[user_id])
                 self._ww_resampled_buffers[user_id].clear()
                 if buffer_size > 0:
-                    logger.debug(f"Cleared {buffer_size} bytes from user {user_id} resampled buffer")
-                
+                    logger.debug(
+                        f"Cleared {buffer_size} bytes from user {user_id} resampled buffer"
+                    )
+
             # Reset all resample states
             for user_id in list(self._ww_resample_state.keys()):
                 self._ww_resample_state[user_id] = None
-                cleanup_stats['states_reset'] += 1
-        
+                cleanup_stats["states_reset"] += 1
+
         logger.info(f"Comprehensive wake word cleanup completed: {cleanup_stats}")
 
         # Track cleanup success for monitoring
@@ -583,22 +595,22 @@ class ManualControlSink(AudioSink):
     def stop_and_get_audio(self) -> bytes:
         """
         Stop PTT recording and return captured audio with race condition protection.
-        
+
         Uses comprehensive cleanup to ensure complete clean state for next interaction.
-        
+
         Returns:
             bytes: The captured audio data in Discord's native PCM format
         """
         # Capture authority user ID for logging purposes
         captured_authority_id = self._bot_state.authority_user_id
-        
+
         self.enable_vad(False)
 
         # TOCTOU Fix: Atomic authority buffer capture and clear
         with self._authority_buffer_lock:
             audio_data = bytes(self._authority_buffer)
             self._authority_buffer.clear()
-            
+
             # Clear VAD-specific state
             self._vad_raw_buffer.clear()
             self._vad_resampled_buffer.clear()
@@ -611,8 +623,10 @@ class ManualControlSink(AudioSink):
         self._clear_all_wake_word_buffers()
 
         # Enhanced logging for debugging
-        logger.debug(f"PTT recording stopped: user_id={captured_authority_id}, "
-                    f"audio_size={len(audio_data)}, buffers_cleared=all_users")
+        logger.debug(
+            f"PTT recording stopped: user_id={captured_authority_id}, "
+            f"audio_size={len(audio_data)}, buffers_cleared=all_users"
+        )
 
         # Track successful interaction
         self._cleanup_metrics.record_successful_interaction(len(audio_data))
@@ -622,54 +636,62 @@ class ManualControlSink(AudioSink):
     async def validate_sink_health(self) -> Dict[str, Any]:
         """
         Comprehensive health check for the audio sink.
-        
+
         Returns:
             Dict containing health status and metrics
         """
         health_report = {
-            'timestamp': time.time(),
-            'overall_status': 'healthy',
-            'issues': []
+            "timestamp": time.time(),
+            "overall_status": "healthy",
+            "issues": [],
         }
-        
+
         try:
             # Check buffer states
             authority_buffer_size = len(self._authority_buffer)
             if authority_buffer_size > 1024 * 1024:  # 1MB threshold
-                health_report['issues'].append(f"Authority buffer unusually large: {authority_buffer_size} bytes")
-                health_report['overall_status'] = 'warning'
-                
+                health_report["issues"].append(
+                    f"Authority buffer unusually large: {authority_buffer_size} bytes"
+                )
+                health_report["overall_status"] = "warning"
+
             # Check wake word model states
             corrupted_models = []
             for user_id, model in self._detectors.items():
                 try:
                     # Basic sanity check - ensure model has required methods
-                    if not hasattr(model, 'predict') or not hasattr(model, 'reset'):
+                    if not hasattr(model, "predict") or not hasattr(model, "reset"):
                         corrupted_models.append(user_id)
                 except Exception as e:
                     corrupted_models.append(user_id)
-                    logger.error(f"Wake word model health check failed for user {user_id}: {e}")
-                    
+                    logger.error(
+                        f"Wake word model health check failed for user {user_id}: {e}"
+                    )
+
             if corrupted_models:
-                health_report['issues'].append(f"Corrupted wake word models: {corrupted_models}")
-                health_report['overall_status'] = 'critical'
-                
+                health_report["issues"].append(
+                    f"Corrupted wake word models: {corrupted_models}"
+                )
+                health_report["overall_status"] = "critical"
+
             # Check background task status
             if self._vad_monitor_task and self._vad_monitor_task.done():
                 exception = self._vad_monitor_task.exception()
                 if exception:
-                    health_report['issues'].append(f"VAD monitor task failed: {exception}")
-                    health_report['overall_status'] = 'critical'
-                    
+                    health_report["issues"].append(
+                        f"VAD monitor task failed: {exception}"
+                    )
+                    health_report["overall_status"] = "critical"
+
             # Add cleanup metrics
-            health_report['metrics'] = self._cleanup_metrics.export_health_report()
-            
+            health_report["metrics"] = self._cleanup_metrics.export_health_report()
+
             return health_report
-            
+
         except Exception as e:
             logger.error(f"Sink health check failed: {e}")
-            health_report['overall_status'] = 'critical'
-            health_report['issues'].append(f"Health check exception: {str(e)}")
+            health_report["overall_status"] = "critical"
+            health_report["issues"].append(f"Health check exception: {str(e)}")
             return health_report
 
     def wants_opus(self) -> bool:
@@ -748,29 +770,31 @@ class ManualControlSink(AudioSink):
     async def _handle_vad_speech_end(self):
         """
         Handle VAD-detected speech end with race condition protection.
-        
+
         RACE CONDITION FIX: Captures authority_user_id immediately to prevent
         race condition where concurrent state changes cause cleanup to fail.
-        
+
         SIMPLIFIED CLEANUP: Uses comprehensive cleanup instead of individual
         user cleanup for better robustness and maintainability.
         """
         # ATOMIC CAPTURE: Prevent race condition by capturing state for logging
         authority_user_id_at_speech_end = self._bot_state.authority_user_id
-        
+
         self.enable_vad(False)
-        
+
         # TOCTOU Fix: Atomic buffer capture and clear
         with self._authority_buffer_lock:
             if not self._authority_buffer:
                 # If there's no audio, still perform cleanup to ensure clean state
                 self._clear_all_wake_word_buffers()
-                logger.debug(f"VAD cleanup with no audio: user_id={authority_user_id_at_speech_end}")
+                logger.debug(
+                    f"VAD cleanup with no audio: user_id={authority_user_id_at_speech_end}"
+                )
                 return
-                
+
             audio_data = bytes(self._authority_buffer)
             self._authority_buffer.clear()
-            
+
             # Clear VAD-specific buffers
             self._vad_raw_buffer.clear()
             self._vad_resampled_buffer.clear()
@@ -783,8 +807,10 @@ class ManualControlSink(AudioSink):
         self._clear_all_wake_word_buffers()
 
         # Enhanced logging for race condition debugging
-        logger.debug(f"VAD speech end cleanup completed: user_id={authority_user_id_at_speech_end}, "
-                    f"audio_size={len(audio_data)}, buffers_cleared=all_users")
+        logger.debug(
+            f"VAD speech end cleanup completed: user_id={authority_user_id_at_speech_end}, "
+            f"audio_size={len(audio_data)}, buffers_cleared=all_users"
+        )
 
         # Track successful interaction
         self._cleanup_metrics.record_successful_interaction(len(audio_data))
@@ -860,7 +886,7 @@ class ManualControlSink(AudioSink):
     def write(self, user: discord.User, data: voice_recv.VoiceData):
         """
         Enhanced write method with comprehensive race condition diagnostics.
-        
+
         This method is called from Discord's audio thread for every 20ms audio frame
         from each user in the voice channel. It must be fast, non-blocking, and
         thread-safe since it's not running on the main event loop.
@@ -873,7 +899,7 @@ class ManualControlSink(AudioSink):
         authority_id = self._bot_state.authority_user_id
         recording_method = self._bot_state.recording_method
         is_authorized = self._bot_state.is_authorized(user)
-        
+
         # Enhanced logging for race condition debugging
         logger.debug(
             f"Audio write: user={user.id}, size={len(data.pcm)}, "
@@ -893,7 +919,9 @@ class ManualControlSink(AudioSink):
                         and self._bot_state.is_authorized(user)
                     ):
                         self._authority_buffer.extend(data.pcm)
-                        logger.debug(f"Authority buffer updated: size={len(self._authority_buffer)}")
+                        logger.debug(
+                            f"Authority buffer updated: size={len(self._authority_buffer)}"
+                        )
 
                         # Conditionally process VAD only for wake word recordings
                         if (
@@ -907,10 +935,7 @@ class ManualControlSink(AudioSink):
                             asyncio.run_coroutine_threadsafe(
                                 self._process_vad_async(data.pcm), self._loop
                             )
-        elif (
-            current_state == BotStateEnum.STANDBY
-            and user.id in self._detectors
-        ):
+        elif current_state == BotStateEnum.STANDBY and user.id in self._detectors:
             self._process_standby_audio(user, data)
 
     def _process_standby_audio(self, user: discord.User, data: voice_recv.VoiceData):

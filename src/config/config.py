@@ -15,13 +15,9 @@ from typing import Optional, Union
 
 from dotenv import load_dotenv
 
+from src.exceptions import ConfigurationError
+
 load_dotenv()
-
-
-class ConfigError(Exception):
-    """Custom exception for configuration errors."""
-
-    pass
 
 
 class Config:
@@ -119,47 +115,53 @@ class Config:
             None.
 
         Raises:
-            ConfigError: If a required configuration is missing or invalid.
+            ConfigurationError: If a required configuration is missing or invalid.
         """
         if not cls.DISCORD_TOKEN:
-            raise ConfigError("DISCORD_TOKEN environment variable not set or empty.")
+            raise ConfigurationError(
+                "DISCORD_TOKEN environment variable not set or empty."
+            )
 
         # Validate that AI_SERVICE_PROVIDER has a recognized value
         if cls.AI_SERVICE_PROVIDER not in ("openai", "gemini"):
-            raise ConfigError(
+            raise ConfigurationError(
                 f"Unsupported AI_SERVICE_PROVIDER: {cls.AI_SERVICE_PROVIDER}. Must be 'openai' or 'gemini'."
             )
 
         # Validate logging configuration
         if not isinstance(cls.LOG_MAX_SIZE, int):
-            raise ConfigError(
+            raise ConfigurationError(
                 f"LOG_MAX_SIZE must be an int, but got {type(cls.LOG_MAX_SIZE).__name__}."
             )
         if not isinstance(cls.LOG_BACKUP_COUNT, int):
-            raise ConfigError(
+            raise ConfigurationError(
                 f"LOG_BACKUP_COUNT must be an int, but got {type(cls.LOG_BACKUP_COUNT).__name__}."
             )
 
         if isinstance(cls.LOG_LEVEL, str):
             # Check if the string is a valid log level name
             if not isinstance(logging.getLevelName(cls.LOG_LEVEL.upper()), int):
-                raise ConfigError(
+                raise ConfigurationError(
                     f"Invalid log level string from Config: '{cls.LOG_LEVEL}'"
                 )
         elif not isinstance(cls.LOG_LEVEL, int):
-            raise ConfigError(
+            raise ConfigurationError(
                 f"LOG_LEVEL must be a str or int, but got {type(cls.LOG_LEVEL).__name__}."
             )
 
         # Validate VAD & Wake Word settings
         if cls.VAD_AGGRESSIVENESS not in (0, 1, 2, 3):
-            raise ConfigError("VAD_AGGRESSIVENESS must be an integer from 0 to 3.")
+            raise ConfigurationError(
+                "VAD_AGGRESSIVENESS must be an integer from 0 to 3."
+            )
         if cls.VAD_FRAME_DURATION_MS not in (10, 20, 30):
-            raise ConfigError("VAD_FRAME_DURATION_MS must be 10, 20, or 30.")
+            raise ConfigurationError("VAD_FRAME_DURATION_MS must be 10, 20, or 30.")
         if not (0.0 <= cls.WAKE_WORD_THRESHOLD <= 1.0):
-            raise ConfigError("WAKE_WORD_THRESHOLD must be between 0.0 and 1.0.")
+            raise ConfigurationError("WAKE_WORD_THRESHOLD must be between 0.0 and 1.0.")
         if not (0.0 <= cls.WAKE_WORD_VAD_THRESHOLD <= 1.0):
-            raise ConfigError("WAKE_WORD_VAD_THRESHOLD must be between 0.0 and 1.0.")
+            raise ConfigurationError(
+                "WAKE_WORD_VAD_THRESHOLD must be between 0.0 and 1.0."
+            )
 
 
 Config.validate()  # Validate configuration on import

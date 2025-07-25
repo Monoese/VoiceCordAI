@@ -18,6 +18,7 @@ from openai.resources.beta.realtime.realtime import AsyncRealtimeConnection
 
 from src.utils.logger import get_logger
 from src.audio.playback import AudioPlaybackManager
+from src.exceptions import AIConnectionError, AIServiceError
 from .connection import OpenAIRealtimeConnection
 from .event_mapper import OpenAIEventHandlerAdapter
 from src.ai_services.base_manager import BaseRealtimeManager
@@ -93,8 +94,16 @@ class OpenAIRealtimeManager(BaseRealtimeManager):
             await conn_obj.session.update(session=initial_session_data)
             logger.info(f"Sent initial session.update: {initial_session_data}")
             return True
+        except AIConnectionError as e:
+            logger.error(
+                f"AI connection error sending initial session.update: {e}",
+                exc_info=True,
+            )
+            return False
         except Exception as e:
-            logger.error(f"Error sending initial session.update: {e}", exc_info=True)
+            logger.error(
+                f"Unexpected error sending initial session.update: {e}", exc_info=True
+            )
             return False
 
     async def _get_active_conn(self) -> Optional[AsyncRealtimeConnection]:
@@ -131,8 +140,17 @@ class OpenAIRealtimeManager(BaseRealtimeManager):
             await conn.input_audio_buffer.append(audio=audio_b64)
             logger.debug("Sent input_audio_buffer.append")
             return True
+        except AIServiceError as e:
+            logger.error(
+                f"AI service error sending input_audio_buffer.append: {e}",
+                exc_info=True,
+            )
+            return False
         except Exception as e:
-            logger.error(f"Error sending input_audio_buffer.append: {e}", exc_info=True)
+            logger.error(
+                f"Unexpected error sending input_audio_buffer.append: {e}",
+                exc_info=True,
+            )
             return False
 
     async def finalize_input_and_request_response(self) -> bool:

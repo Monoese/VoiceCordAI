@@ -16,6 +16,7 @@ from discord.ext import commands
 
 from src.bot.session.guild_session import GuildSession
 from src.bot.state import BotModeEnum
+from src.exceptions import SessionError
 from src.utils.logger import get_logger
 
 
@@ -260,9 +261,14 @@ class VoiceCog(commands.Cog):
             try:
                 await session.cleanup()
                 await ctx.send("Session terminated successfully.")
+            except SessionError as e:
+                logger.error(
+                    f"Session error during cleanup for guild {ctx.guild.id}: {e}",
+                    exc_info=True,
+                )
             except Exception as e:
                 logger.error(
-                    f"An error occurred during session cleanup for guild {ctx.guild.id}: {e}",
+                    f"Unexpected error during session cleanup for guild {ctx.guild.id}: {e}",
                     exc_info=True,
                 )
                 await ctx.send(

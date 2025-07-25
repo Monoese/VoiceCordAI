@@ -6,6 +6,7 @@ from typing import ByteString
 from pydub import AudioSegment
 
 from src.config.config import Config
+from src.exceptions import AudioProcessingError
 from src.utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -24,7 +25,9 @@ def _blocking_process_audio(
         )
     except Exception as e:
         logger.error(f"Failed to load raw audio into pydub AudioSegment: {e}")
-        raise RuntimeError("Audio processing failed during data loading.") from e
+        raise AudioProcessingError(
+            "Audio processing failed during data loading."
+        ) from e
 
     processed_segment = audio_segment.set_channels(target_channels)
     processed_segment = processed_segment.set_frame_rate(target_frame_rate)
@@ -53,7 +56,7 @@ async def process_recorded_audio(
         bytes: The processed S16LE PCM audio bytes ready for the AI service.
 
     Raises:
-        RuntimeError: If the audio processing fails at any stage.
+        AudioProcessingError: If the audio processing fails at any stage.
     """
     loop = asyncio.get_running_loop()
     processed_bytes = await loop.run_in_executor(
