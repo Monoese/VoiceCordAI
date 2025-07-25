@@ -745,6 +745,31 @@ class ManualControlSink(AudioSink):
                 f"Error in ManualControlSink VAD monitor loop: {e}", exc_info=True
             )
 
+    def _resample_audio(self, raw_chunk: bytes, resample_state: Optional[any], target_sample_rate: int = 16000) -> tuple[bytes, Optional[any]]:
+        """
+        Generic helper method for resampling Discord audio to target format.
+
+        Converts 48kHz stereo PCM to target mono PCM with stateful resampling.
+
+        Args:
+            raw_chunk: Raw PCM audio data from Discord (48kHz, 16-bit, stereo)
+            resample_state: Current audioop resampling state for smooth conversion
+            target_sample_rate: Target sample rate in Hz (default: 16000)
+
+        Returns:
+            Tuple of (resampled_audio_bytes, new_resample_state)
+        """
+        mono_audio = audioop.tomono(raw_chunk, Config.SAMPLE_WIDTH, 1, 1)
+        resampled_audio, new_state = audioop.ratecv(
+            mono_audio,
+            Config.SAMPLE_WIDTH,
+            1,
+            Config.DISCORD_AUDIO_FRAME_RATE,
+            target_sample_rate,
+            resample_state,
+        )
+        return resampled_audio, new_state
+
     def _resample_and_convert(self, raw_chunk: bytes, user_id: int) -> bytes:
         """
         Convert Discord audio format to wake word model requirements.
@@ -755,15 +780,7 @@ class ManualControlSink(AudioSink):
         Uses audioop.ratecv() which maintains per-user conversion state
         for smooth resampling across chunk boundaries.
         """
-        mono_audio = audioop.tomono(raw_chunk, Config.SAMPLE_WIDTH, 1, 1)
-        resampled_audio, state = audioop.ratecv(
-            mono_audio,
-            Config.SAMPLE_WIDTH,
-            1,
-            Config.DISCORD_AUDIO_FRAME_RATE,
-            Config.WAKE_WORD_SAMPLE_RATE,
-            self._ww_resample_state.get(user_id),
-        )
+        resampled_audio, state = self._resample_audio(raw_chunk, self._ww_resample_state.get(user_id), Config.WAKE_WORD_SAMPLE_RATE)
         self._ww_resample_state[user_id] = state
         return resampled_audio
 
@@ -863,15 +880,7 @@ class ManualControlSink(AudioSink):
             raw_chunk = self._vad_raw_buffer[:min_vad_raw_bytes]
             del self._vad_raw_buffer[:min_vad_raw_bytes]
 
-            mono_audio = audioop.tomono(raw_chunk, Config.SAMPLE_WIDTH, 1, 1)
-            resampled_audio, self._vad_resample_state = audioop.ratecv(
-                mono_audio,
-                Config.SAMPLE_WIDTH,
-                1,
-                Config.DISCORD_AUDIO_FRAME_RATE,
-                Config.VAD_SAMPLE_RATE,
-                self._vad_resample_state,
-            )
+            resampled_audio, self._vad_resample_state = self._resample_audio(raw_chunk, self._vad_resample_state, Config.VAD_SAMPLE_RATE)
             self._vad_resampled_buffer.extend(resampled_audio)
 
         # Process the resampled buffer in VAD-compatible frames

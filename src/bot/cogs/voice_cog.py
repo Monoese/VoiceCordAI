@@ -81,6 +81,42 @@ class VoiceCog(commands.Cog):
         self._sessions.clear()
         logger.info("All active sessions cleaned up.")
 
+    async def _handle_connect_command(self, ctx: commands.Context, mode: BotModeEnum) -> None:
+        """
+        Shared logic for connecting the bot in different modes.
+
+        Args:
+            ctx: The command context.
+            mode: The bot mode to connect in.
+        """
+        async with self._session_locks[ctx.guild.id]:
+            if ctx.guild.id in self._sessions:
+                await ctx.send(
+                    "I'm already in a session in this server. Use `/disconnect` to end it first."
+                )
+                return
+
+            session = self._get_or_create_session(ctx.guild)
+            try:
+                success = await session.initialize_session(ctx, mode)
+                if not success:
+                    mode_name = "Manual" if mode == BotModeEnum.ManualControl else "Realtime"
+                    logger.warning(
+                        f"{mode_name} connection process failed for guild {ctx.guild.id}. Cleaning up session."
+                    )
+                    if ctx.guild.id in self._sessions:
+                        del self._sessions[ctx.guild.id]
+            except StateTransitionError as e:
+                mode_name = "manual" if mode == BotModeEnum.ManualControl else "realtime"
+                logger.critical(
+                    f"Caught unrecoverable state error in guild {ctx.guild.id} during {mode_name} connect: {e}", 
+                    exc_info=True
+                )
+                await ctx.send("An unexpected internal error occurred. The session will now terminate.")
+                await session.cleanup()
+                if ctx.guild.id in self._sessions:
+                    del self._sessions[ctx.guild.id]
+
     @commands.Cog.listener()
     async def on_voice_state_update(
         self,
@@ -165,6 +201,7 @@ class VoiceCog(commands.Cog):
                     del self._sessions[reaction.message.guild.id]
 
     @commands.command(name="connect", aliases=["manual_connect"])
+    @commands.guild_only()
     async def connect_manual_command(self, ctx: commands.Context) -> None:
         """
         Connects the bot in ManualControl mode.
@@ -175,38 +212,10 @@ class VoiceCog(commands.Cog):
         Args:
             ctx: The command context.
         """
-        if not ctx.guild:
-            await ctx.send("This command can only be used in a server.")
-            return
-
-        # CONCURRENCY FIX: Atomic session operations per guild
-        async with self._session_locks[ctx.guild.id]:
-            if ctx.guild.id in self._sessions:
-                await ctx.send(
-                    "I'm already in a session in this server. Use `/disconnect` to end it first."
-                )
-                return
-
-            session = self._get_or_create_session(ctx.guild)
-            try:
-                success = await session.initialize_session(ctx, BotModeEnum.ManualControl)
-                if not success:
-                    logger.warning(
-                        f"Manual connection process failed for guild {ctx.guild.id}. Cleaning up session."
-                    )
-                    if ctx.guild.id in self._sessions:
-                        del self._sessions[ctx.guild.id]
-            except StateTransitionError as e:
-                logger.critical(
-                    f"Caught unrecoverable state error in guild {ctx.guild.id} during manual connect: {e}", 
-                    exc_info=True
-                )
-                await ctx.send("An unexpected internal error occurred. The session will now terminate.")
-                await session.cleanup()
-                if ctx.guild.id in self._sessions:
-                    del self._sessions[ctx.guild.id]
+        await self._handle_connect_command(ctx, BotModeEnum.ManualControl)
 
     @commands.command(name="realtime_connect")
+    @commands.guild_only()
     async def connect_realtime_command(self, ctx: commands.Context) -> None:
         """
         Connects the bot in RealtimeTalk mode.
@@ -216,38 +225,10 @@ class VoiceCog(commands.Cog):
         Args:
             ctx: The command context.
         """
-        if not ctx.guild:
-            await ctx.send("This command can only be used in a server.")
-            return
-
-        # CONCURRENCY FIX: Atomic session operations per guild
-        async with self._session_locks[ctx.guild.id]:
-            if ctx.guild.id in self._sessions:
-                await ctx.send(
-                    "I'm already in a session in this server. Use `/disconnect` to end it first."
-                )
-                return
-
-            session = self._get_or_create_session(ctx.guild)
-            try:
-                success = await session.initialize_session(ctx, BotModeEnum.RealtimeTalk)
-                if not success:
-                    logger.warning(
-                        f"Realtime connection process failed for guild {ctx.guild.id}. Cleaning up session."
-                    )
-                    if ctx.guild.id in self._sessions:
-                        del self._sessions[ctx.guild.id]
-            except StateTransitionError as e:
-                logger.critical(
-                    f"Caught unrecoverable state error in guild {ctx.guild.id} during realtime connect: {e}", 
-                    exc_info=True
-                )
-                await ctx.send("An unexpected internal error occurred. The session will now terminate.")
-                await session.cleanup()
-                if ctx.guild.id in self._sessions:
-                    del self._sessions[ctx.guild.id]
+        await self._handle_connect_command(ctx, BotModeEnum.RealtimeTalk)
 
     @commands.command(name="set")
+    @commands.guild_only()
     async def set_provider_command(
         self, ctx: commands.Context, provider_name: str
     ) -> None:
@@ -261,10 +242,6 @@ class VoiceCog(commands.Cog):
             ctx: The command context.
             provider_name: The name of the AI provider to switch to.
         """
-        if not ctx.guild:
-            await ctx.send("This command can only be used in a server.")
-            return
-
         session = self._sessions.get(ctx.guild.id)
         if not session:
             await ctx.send(
@@ -285,6 +262,7 @@ class VoiceCog(commands.Cog):
                 del self._sessions[ctx.guild.id]
 
     @commands.command(name="disconnect")
+    @commands.guild_only()
     async def disconnect_command(self, ctx: commands.Context) -> None:
         """
         Terminates and cleans up the session for the current guild.
@@ -296,10 +274,6 @@ class VoiceCog(commands.Cog):
         Args:
             ctx: The command context.
         """
-        if not ctx.guild:
-            await ctx.send("This command can only be used in a server.")
-            return
-
         # CONCURRENCY FIX: Atomic session operations per guild
         async with self._session_locks[ctx.guild.id]:
             session = self._sessions.get(ctx.guild.id)
