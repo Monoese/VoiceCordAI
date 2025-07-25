@@ -128,8 +128,9 @@ After using `/connect`, the bot posts a status message. Use reactions on that me
     - **Remove 🎙️ Reaction:** Stop recording and send your audio to the AI.
 
 2.  **Wake Word:**
-    - Say the wake word (e.g., "Alexa") to start recording.
+    - Say the wake word ("Alexa") to start recording.
     - The bot will automatically detect when you stop speaking and send your audio to the AI.
+    - *Note: You can use a custom wake word by replacing the file in `assets/wakeword_models` with any model compatible with [openWakeWord](https://github.com/dscripka/openWakeWord).*
 
 **Other Controls:**
 - **Add 🙏 Reaction:** Give or revoke consent for your voice to be recorded. You must grant consent to use the wake word feature.
@@ -145,7 +146,14 @@ If you encounter issues, please verify that:
 
 ## Acknowledgments
 
-- [OpenAI API](https://platform.openai.com/docs/guides/realtime)
-- [Google Gemini API](https://ai.google.dev/gemini-api/docs/live)
-- [discord.py](https://discordpy.readthedocs.io/)
+- [OpenAI](https://openai.com/)
+- [Google Gemini](https://ai.google.dev/)
+- [discord.py](https://github.com/Rapptz/discord.py)
 - [discord-ext-voice-recv](https://github.com/imayhaveborkedit/discord-ext-voice-recv)
+- [openWakeWord](https://github.com/dscripka/openWakeWord)
+- [webrtcvad-wheels](https://github.com/wiseman/py-webrtcvad-wheels)
+- [NumPy](https://numpy.org/)
+
+## License
+
+This project is licensed under the MIT License - see the [LICENSE.md](LICENSE.md) file for details.
