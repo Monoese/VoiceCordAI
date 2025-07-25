@@ -30,6 +30,9 @@ class Config:
     The `validate` method ensures that critical configurations are present.
     """
 
+    # Supported AI service providers
+    SUPPORTED_AI_PROVIDERS: frozenset[str] = frozenset({"openai", "gemini"})
+
     BASE_DIR: Path = (
         Path(__file__).resolve().parent.parent.parent
     )  # Base directory of the project
@@ -123,9 +126,10 @@ class Config:
             )
 
         # Validate that AI_SERVICE_PROVIDER has a recognized value
-        if cls.AI_SERVICE_PROVIDER not in ("openai", "gemini"):
+        if cls.AI_SERVICE_PROVIDER not in cls.SUPPORTED_AI_PROVIDERS:
             raise ConfigurationError(
-                f"Unsupported AI_SERVICE_PROVIDER: {cls.AI_SERVICE_PROVIDER}. Must be 'openai' or 'gemini'."
+                f"Unsupported AI_SERVICE_PROVIDER: '{cls.AI_SERVICE_PROVIDER}'. "
+                f"Must be one of: {', '.join(sorted(cls.SUPPORTED_AI_PROVIDERS))}"
             )
 
         # Validate logging configuration

@@ -43,13 +43,13 @@ logger.info(
 
 # Validate that the default provider from Config is a valid factory choice.
 # The actual key validity will be checked on-demand when the manager is created.
-if Config.AI_SERVICE_PROVIDER not in ai_service_factories:
+if Config.AI_SERVICE_PROVIDER not in Config.SUPPORTED_AI_PROVIDERS:
     logger.error(
-        f"Default AI_SERVICE_PROVIDER '{Config.AI_SERVICE_PROVIDER}' is not a valid choice. "
-        f"Available providers: {list(ai_service_factories.keys())}. Exiting."
+        f"Default AI_SERVICE_PROVIDER '{Config.AI_SERVICE_PROVIDER}' is not supported. "
+        f"Supported providers: {', '.join(sorted(Config.SUPPORTED_AI_PROVIDERS))}. Exiting."
     )
     raise SystemExit(
-        f"Default AI_SERVICE_PROVIDER '{Config.AI_SERVICE_PROVIDER}' is not a valid choice."
+        f"Default AI_SERVICE_PROVIDER '{Config.AI_SERVICE_PROVIDER}' is not supported."
     )
 
 
