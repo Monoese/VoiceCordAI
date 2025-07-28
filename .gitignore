@@ -23,3 +23,5 @@ logs/
 # Development
 docs/
 .aider*
+.claude/
+CLAUDE.md
