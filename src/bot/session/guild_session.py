@@ -218,6 +218,9 @@ class GuildSession:
                 if isinstance(self._audio_sink, ManualControlSink):
                     self._audio_sink.enable_vad(False)
                 await self.bot_state.start_recording(user, RecordingMethod.PushToTalk)
+                # SESSION ID SYNC: Update sink session ID after new recording starts
+                if isinstance(self._audio_sink, ManualControlSink):
+                    self._audio_sink.update_session_id()
             elif (
                 not added
                 and self.bot_state.current_state == BotStateEnum.RECORDING
@@ -249,6 +252,9 @@ class GuildSession:
 
             # Immediately transition to RECORDING state to capture all audio.
             await self.bot_state.start_recording(user, RecordingMethod.WakeWord)
+            # SESSION ID SYNC: Update sink session ID after new recording starts
+            if isinstance(self._audio_sink, ManualControlSink):
+                self._audio_sink.update_session_id()
 
             # Play the cue to signal to the user that recording has started.
             await self.audio_playback_manager.play_cue("start_recording")

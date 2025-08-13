@@ -54,6 +54,14 @@ class CleanupMetrics:
             logger.warning(
                 f"Race condition prevented: captured={captured_id}, current={current_id}"
             )
+    
+    def record_session_id_mismatch(self, expected_session_id, actual_session_id):
+        """Track when session ID mismatch prevents cross-session contamination."""
+        if expected_session_id != actual_session_id:
+            self.race_conditions_prevented += 1
+            logger.warning(
+                f"Session ID mismatch prevented contamination: expected={expected_session_id}, actual={actual_session_id}"
+            )
 
     def record_successful_interaction(self, audio_size: int):
         """Track successful audio interactions."""
@@ -450,6 +458,11 @@ class ManualControlSink(AudioSink):
 
         # Add cleanup metrics tracking
         self._cleanup_metrics = CleanupMetrics()
+        
+        # Session ID tracking for cross-session contamination prevention
+        self._session_id_at_creation = self._bot_state.current_session_id
+        self._active_session_id = self._session_id_at_creation
+        logger.debug(f"ManualControlSink created for session {self._session_id_at_creation}")
 
         for user_id in initial_consented_users:
             self.add_user(user_id)
@@ -591,6 +604,20 @@ class ManualControlSink(AudioSink):
         self._has_received_audio_for_vad = False  # Reset on state change
         if self._vad_analyzer:
             self._vad_analyzer.reset()
+            
+    def update_session_id(self) -> None:
+        """
+        Updates the active session ID to match the current bot state session.
+        
+        This should be called when a new recording starts to ensure the sink
+        is synchronized with the current session and prevent cross-session contamination.
+        """
+        new_session_id = self._bot_state.current_session_id
+        if new_session_id != self._active_session_id:
+            logger.info(
+                f"Updating ManualControlSink session ID: {self._active_session_id} -> {new_session_id}"
+            )
+            self._active_session_id = new_session_id
 
     def stop_and_get_audio(self) -> bytes:
         """
@@ -601,6 +628,16 @@ class ManualControlSink(AudioSink):
         Returns:
             bytes: The captured audio data in Discord's native PCM format
         """
+        # SESSION ID VALIDATION: Prevent cross-session contamination
+        current_session_id = self._bot_state.current_session_id
+        if current_session_id != self._active_session_id:
+            self._cleanup_metrics.record_session_id_mismatch(self._active_session_id, current_session_id)
+            logger.warning(
+                f"Session ID mismatch in stop_and_get_audio: sink={self._active_session_id}, state={current_session_id}. "
+                f"Returning empty audio to prevent contamination."
+            )
+            return b""
+        
         # Capture authority user ID for logging purposes
         captured_authority_id = self._bot_state.authority_user_id
 
@@ -794,6 +831,16 @@ class ManualControlSink(AudioSink):
         SIMPLIFIED CLEANUP: Uses comprehensive cleanup instead of individual
         user cleanup for better robustness and maintainability.
         """
+        # SESSION ID VALIDATION: Prevent cross-session contamination
+        current_session_id = self._bot_state.current_session_id
+        if current_session_id != self._active_session_id:
+            self._cleanup_metrics.record_session_id_mismatch(self._active_session_id, current_session_id)
+            logger.warning(
+                f"Session ID mismatch in VAD speech end: sink={self._active_session_id}, state={current_session_id}. "
+                f"Skipping callback to prevent contamination."
+            )
+            return
+        
         # ATOMIC CAPTURE: Prevent race condition by capturing state for logging
         authority_user_id_at_speech_end = self._bot_state.authority_user_id
 
@@ -901,6 +948,14 @@ class ManualControlSink(AudioSink):
         thread-safe since it's not running on the main event loop.
         """
         if not user:
+            return
+
+        # SESSION ID VALIDATION: Early exit if session has changed
+        current_session_id = self._bot_state.current_session_id
+        if current_session_id != self._active_session_id:
+            # Don't log every frame to avoid spam - use modulo for periodic logging
+            if hash(data.pcm) % 100 == 0:  # Log ~1% of frames
+                self._cleanup_metrics.record_session_id_mismatch(self._active_session_id, current_session_id)
             return
 
         # Capture state atomically for consistent logging
