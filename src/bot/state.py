@@ -353,29 +353,37 @@ class BotState:
         """
         return self.authority_user_id == "anyone" or user.id == self.authority_user_id
 
-    async def enter_connection_error_state(self) -> None:
+    async def enter_connection_error_state(self) -> bool:
         """
         Transition the bot to the CONNECTION_ERROR state.
 
         This method:
         1. Transitions the bot to CONNECTION_ERROR state.
         2. Resets authority user.
+
+        Returns:
+            bool: True if the state was changed, False if already in error state.
         """
         if self._current_state == BotStateEnum.CONNECTION_ERROR:
-            return  # Already in the error state
+            return False  # Already in the error state
 
         await self._set_state(BotStateEnum.CONNECTION_ERROR)
         self._reset_authority()  # Reset authority
+        return True
 
-    async def recover_to_standby(self) -> None:
+    async def recover_to_standby(self) -> bool:
         """
         Attempt to recover from CONNECTION_ERROR state back to STANDBY.
 
         This method should be called when external connections are confirmed to be restored.
         It transitions the state to STANDBY.
+
+        Returns:
+            bool: True if recovery was successful, False if not in error state.
         """
         if self._current_state != BotStateEnum.CONNECTION_ERROR:
-            return  # Can only recover from connection error state
+            return False  # Can only recover from connection error state
 
         await self._set_state(BotStateEnum.STANDBY)
         self._reset_authority()
+        return True
