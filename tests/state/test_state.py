@@ -1,7 +1,7 @@
 import pytest
 from unittest.mock import AsyncMock, MagicMock
 
-from src.bot.state import BotState, BotStateEnum
+from src.bot.state import BotState, BotStateEnum, RecordingMethod
 
 
 @pytest.fixture
@@ -19,244 +19,251 @@ def mock_user() -> MagicMock:
     return user
 
 
-@pytest.fixture
-def mock_ctx() -> MagicMock:
-    """Pytest fixture for a mock Discord context with an async `send` method."""
-    ctx = MagicMock()
-    # The message returned by send() needs an add_reaction method
-    mock_message = MagicMock()
-    mock_message.add_reaction = AsyncMock()
-    ctx.send = AsyncMock(return_value=mock_message)
-    return ctx
-
-
 def test_botstate_initialization(bot_state: BotState):
     """
     Tests that a new BotState object initializes in the correct default state.
     """
-    # Assert
     assert bot_state.current_state == BotStateEnum.IDLE
     assert bot_state.authority_user_id == "anyone"
-    assert bot_state.standby_message is None
     assert bot_state.active_ai_provider_name is not None  # Check default is set
+    assert bot_state.mode is not None  # Check mode is set
+    assert bot_state.recording_method is None  # No recording method initially
 
 
 @pytest.mark.asyncio
-async def test_initialize_standby_from_idle(bot_state: BotState, mock_ctx: MagicMock):
+async def test_set_state_from_idle_to_standby(bot_state: BotState):
     """
-    Tests the valid transition from IDLE to STANDBY.
+    Tests the valid transition from IDLE to STANDBY using set_state.
     """
     # Act
-    success = await bot_state.initialize_standby(mock_ctx)
+    success = await bot_state.set_state(BotStateEnum.STANDBY)
 
     # Assert
     assert success is True
     assert bot_state.current_state == BotStateEnum.STANDBY
-    mock_ctx.send.assert_called_once()
-    assert bot_state.standby_message is not None
-    # Check that the reaction was added to the message that ctx.send returned
-    mock_ctx.send.return_value.add_reaction.assert_called_once_with("🎙")
 
 
 @pytest.mark.asyncio
-async def test_initialize_standby_when_not_idle(
-    bot_state: BotState, mock_ctx: MagicMock
-):
+async def test_set_state_when_already_in_state(bot_state: BotState):
     """
-    Tests that standby cannot be initialized from a state other than IDLE.
+    Tests that setting the same state returns False.
     """
-    # Arrange
-    bot_state._current_state = BotStateEnum.RECORDING
-
+    # Arrange - ensure we're in IDLE
+    assert bot_state.current_state == BotStateEnum.IDLE
+    
     # Act
-    success = await bot_state.initialize_standby(mock_ctx)
+    success = await bot_state.set_state(BotStateEnum.IDLE)
 
     # Assert
     assert success is False
-    assert bot_state.current_state == BotStateEnum.RECORDING
-    mock_ctx.send.assert_not_called()
+    assert bot_state.current_state == BotStateEnum.IDLE
 
 
 @pytest.mark.asyncio
 async def test_start_recording_from_standby(bot_state: BotState, mock_user: MagicMock):
     """
-    Tests the valid transition from STANDBY to RECORDING.
-    """
-    # Arrange: Manually put the bot into STANDBY state with a mock message
-    mock_message = MagicMock()
-    mock_message.edit = AsyncMock()
-    bot_state._standby_message = mock_message
-    bot_state._current_state = BotStateEnum.STANDBY
-
-    # Act
-    success = await bot_state.start_recording(mock_user)
-
-    # Assert
-    assert success is True
-    assert bot_state.current_state == BotStateEnum.RECORDING
-    assert bot_state.authority_user_id == mock_user.id
-    assert bot_state._authority_user_name == mock_user.name
-    mock_message.edit.assert_called_once()
-
-
-@pytest.mark.asyncio
-async def test_start_recording_when_not_in_standby(
-    bot_state: BotState, mock_user: MagicMock
-):
-    """
-    Tests that recording cannot be started from a state other than STANDBY.
+    Tests the transition from STANDBY to RECORDING when starting a recording.
     """
     # Arrange
-    bot_state._current_state = BotStateEnum.IDLE
-
+    await bot_state.set_state(BotStateEnum.STANDBY)
+    
     # Act
-    success = await bot_state.start_recording(mock_user)
+    await bot_state.start_recording(mock_user, RecordingMethod.PushToTalk)
 
     # Assert
-    assert success is False
-    assert bot_state.current_state == BotStateEnum.IDLE
-    assert bot_state.authority_user_id == "anyone"
+    assert bot_state.current_state == BotStateEnum.RECORDING
+    assert bot_state.authority_user_id == mock_user.id
+    assert bot_state.recording_method == RecordingMethod.PushToTalk
 
 
 @pytest.mark.asyncio
-async def test_stop_recording_from_recording(bot_state: BotState):
+async def test_start_recording_when_not_in_standby(bot_state: BotState, mock_user: MagicMock):
     """
-    Tests the valid transition from RECORDING back to STANDBY.
+    Tests that start_recording does nothing when not in STANDBY state.
     """
-    # Arrange: Manually put the bot into RECORDING state
-    mock_message = MagicMock()
-    mock_message.edit = AsyncMock()
-    bot_state._standby_message = mock_message
-    bot_state._current_state = BotStateEnum.RECORDING
-    bot_state._authority_user_id = 12345
-    bot_state._authority_user_name = "TestUser"
-
+    # Arrange - ensure we're in IDLE
+    assert bot_state.current_state == BotStateEnum.IDLE
+    
     # Act
-    success = await bot_state.stop_recording()
+    await bot_state.start_recording(mock_user, RecordingMethod.PushToTalk)
+
+    # Assert - state should remain unchanged
+    assert bot_state.current_state == BotStateEnum.IDLE
+    assert bot_state.authority_user_id == "anyone"
+    assert bot_state.recording_method is None
+
+
+@pytest.mark.asyncio
+async def test_stop_recording_from_recording(bot_state: BotState, mock_user: MagicMock):
+    """
+    Tests the transition from RECORDING to STANDBY when stopping a recording.
+    """
+    # Arrange
+    await bot_state.set_state(BotStateEnum.STANDBY)
+    await bot_state.start_recording(mock_user, RecordingMethod.WakeWord)
+    assert bot_state.current_state == BotStateEnum.RECORDING
+    
+    # Act
+    await bot_state.stop_recording()
 
     # Assert
-    assert success is True
     assert bot_state.current_state == BotStateEnum.STANDBY
     assert bot_state.authority_user_id == "anyone"
-    mock_message.edit.assert_called_once()
+    assert bot_state.recording_method is None
 
 
 @pytest.mark.asyncio
 async def test_stop_recording_when_not_recording(bot_state: BotState):
     """
-    Tests that recording cannot be stopped if not in RECORDING state.
+    Tests that stop_recording does nothing when not in RECORDING state.
     """
     # Arrange
-    bot_state._current_state = BotStateEnum.STANDBY
-
+    await bot_state.set_state(BotStateEnum.STANDBY)
+    
     # Act
-    success = await bot_state.stop_recording()
+    await bot_state.stop_recording()
 
-    # Assert
-    assert success is False
+    # Assert - state should remain unchanged
     assert bot_state.current_state == BotStateEnum.STANDBY
 
 
 @pytest.mark.asyncio
-async def test_reset_to_idle(bot_state: BotState):
+async def test_reset_to_idle(bot_state: BotState, mock_user: MagicMock):
     """
-    Tests resetting the state to IDLE from another state.
+    Tests resetting the bot state to IDLE from various states.
     """
-    # Arrange: Manually put into a non-idle state with a message
-    mock_message = MagicMock()
-    mock_message.delete = AsyncMock()
-    bot_state._standby_message = mock_message
-    bot_state._current_state = BotStateEnum.RECORDING
-    bot_state._authority_user_id = 12345
-
+    # Arrange - put bot in STANDBY with some state
+    await bot_state.set_state(BotStateEnum.STANDBY)
+    await bot_state.grant_consent(mock_user.id)
+    
     # Act
-    success = await bot_state.reset_to_idle()
+    await bot_state.reset_to_idle()
 
     # Assert
-    assert success is True
     assert bot_state.current_state == BotStateEnum.IDLE
     assert bot_state.authority_user_id == "anyone"
-    assert bot_state.standby_message is None
-    mock_message.delete.assert_called_once()
+    assert len(bot_state.get_consented_user_ids()) == 0
 
 
 def test_is_authorized(bot_state: BotState, mock_user: MagicMock):
     """
-    Tests the authorization logic.
+    Tests the authorization check for users.
     """
-    # 1. Test when anyone is authorized
-    bot_state._authority_user_id = "anyone"
+    # When authority is "anyone"
     assert bot_state.is_authorized(mock_user) is True
 
-    # 2. Test when a specific user is authorized and is the one asking
-    bot_state._authority_user_id = mock_user.id
+    # Set specific authority
+    bot_state._set_authority(mock_user)
     assert bot_state.is_authorized(mock_user) is True
 
-    # 3. Test when a specific user is authorized and a different user is asking
-    another_user = MagicMock()
-    another_user.id = 987654321
-    assert bot_state.is_authorized(another_user) is False
+    # Different user
+    other_user = MagicMock()
+    other_user.id = 987654321
+    assert bot_state.is_authorized(other_user) is False
 
 
 @pytest.mark.asyncio
 async def test_enter_connection_error_state(bot_state: BotState):
     """
-    Tests transitioning to the CONNECTION_ERROR state.
+    Tests entering the CONNECTION_ERROR state.
     """
     # Arrange
-    mock_message = MagicMock()
-    mock_message.edit = AsyncMock()
-    bot_state._standby_message = mock_message
-    bot_state._current_state = BotStateEnum.STANDBY
-    bot_state._authority_user_id = 12345
-
+    await bot_state.set_state(BotStateEnum.STANDBY)
+    
     # Act
-    success = await bot_state.enter_connection_error_state()
+    result = await bot_state.enter_connection_error_state()
 
     # Assert
-    assert success is True
+    assert result is True
     assert bot_state.current_state == BotStateEnum.CONNECTION_ERROR
     assert bot_state.authority_user_id == "anyone"
-    mock_message.edit.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_enter_connection_error_state_when_already_in_error(bot_state: BotState):
+    """
+    Tests that entering error state when already in error returns False.
+    """
+
+    # Arrange - first get to a valid state that can transition to CONNECTION_ERROR
+    await bot_state.set_state(BotStateEnum.STANDBY)
+    await bot_state.enter_connection_error_state()
+    assert bot_state.current_state == BotStateEnum.CONNECTION_ERROR
+    
+    # Act
+    result = await bot_state.enter_connection_error_state()
+
+    # Assert
+    assert result is False
+    assert bot_state.current_state == BotStateEnum.CONNECTION_ERROR
 
 
 @pytest.mark.asyncio
 async def test_recover_to_standby(bot_state: BotState):
     """
-    Tests recovering from CONNECTION_ERROR back to STANDBY.
+    Tests recovering from CONNECTION_ERROR to STANDBY.
     """
-    # Arrange
-    mock_message = MagicMock()
-    mock_message.edit = AsyncMock()
-    bot_state._standby_message = mock_message
-    bot_state._current_state = BotStateEnum.CONNECTION_ERROR
-
+    # Arrange - first get to a valid state that can transition to CONNECTION_ERROR
+    await bot_state.set_state(BotStateEnum.STANDBY)
+    await bot_state.enter_connection_error_state()
+    assert bot_state.current_state == BotStateEnum.CONNECTION_ERROR
+    
     # Act
-    success = await bot_state.recover_to_standby()
+    result = await bot_state.recover_to_standby()
 
     # Assert
-    assert success is True
+    assert result is True
     assert bot_state.current_state == BotStateEnum.STANDBY
     assert bot_state.authority_user_id == "anyone"
-    mock_message.edit.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_recover_to_standby_when_not_in_error(bot_state: BotState):
+    """
+    Tests that recovery only works from CONNECTION_ERROR state.
+    """
+    # Arrange - ensure we're in IDLE
+    assert bot_state.current_state == BotStateEnum.IDLE
+    
+    # Act
+    result = await bot_state.recover_to_standby()
+
+    # Assert
+    assert result is False
+    assert bot_state.current_state == BotStateEnum.IDLE
 
 
 @pytest.mark.asyncio
 async def test_set_active_ai_provider_name(bot_state: BotState):
     """
-    Tests that setting the AI provider name updates the state and the UI message.
+    Tests setting the active AI provider name.
     """
-    # Arrange: Manually put the bot into STANDBY state with a mock message
-    mock_message = MagicMock()
-    mock_message.edit = AsyncMock()
-    bot_state._standby_message = mock_message
-    bot_state._current_state = BotStateEnum.STANDBY
-    new_provider_name = "new_provider"
-
+    # Arrange
+    initial_provider = bot_state.active_ai_provider_name
+    new_provider = "gemini"
+    
     # Act
-    await bot_state.set_active_ai_provider_name(new_provider_name)
+    await bot_state.set_active_ai_provider_name(new_provider)
 
     # Assert
-    assert bot_state.active_ai_provider_name == new_provider_name
-    # Verify that the UI was updated to reflect the change
-    mock_message.edit.assert_called_once()
+    assert bot_state.active_ai_provider_name == new_provider
+    assert bot_state.active_ai_provider_name != initial_provider
+
+
+@pytest.mark.asyncio
+async def test_consent_management(bot_state: BotState):
+    """
+    Tests granting and revoking consent for users.
+    """
+    user_id = 123456789
+    
+    # Initially no consent
+    assert user_id not in bot_state.get_consented_user_ids()
+    
+    # Grant consent
+    await bot_state.grant_consent(user_id)
+    assert user_id in bot_state.get_consented_user_ids()
+    
+    # Revoke consent
+    await bot_state.revoke_consent(user_id)
+    assert user_id not in bot_state.get_consented_user_ids()
