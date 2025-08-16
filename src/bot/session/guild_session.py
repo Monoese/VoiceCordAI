@@ -256,8 +256,8 @@ class GuildSession:
             if isinstance(self._audio_sink, ManualControlSink):
                 self._audio_sink.update_session_id()
 
-            # Play the cue to signal to the user that recording has started.
-            await self.audio_playback_manager.play_cue("start_recording")
+            # Commented out to test if cue playback disrupts audio reception
+            # await self.audio_playback_manager.play_cue("start_recording")
 
     async def on_vad_speech_end(self, audio_data: bytes) -> None:
         async with self._action_lock:
@@ -268,8 +268,7 @@ class GuildSession:
                 return
 
             logger.info("VAD detected end of speech. Transitioning to STANDBY.")
-            # Await the sound cue to provide immediate user feedback.
-            await self.audio_playback_manager.play_cue("end_recording")
+            # No end recording cue - proceed directly to processing
 
             # Start processing the audio in a background task.
             self._handle_finished_recording(audio_data)

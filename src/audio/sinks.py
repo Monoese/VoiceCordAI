@@ -512,6 +512,8 @@ class ManualControlSink(AudioSink):
         logger.info("Cleaning up ManualControlSink.")
         if self._vad_monitor_task and not self._vad_monitor_task.done():
             self._vad_monitor_task.cancel()
+        # Destroy VAD analyzer to ensure clean shutdown
+        self._vad_analyzer = None
         self._detectors.clear()
         self._user_audio_buffers.clear()
         self._authority_buffer.clear()
@@ -597,13 +599,31 @@ class ManualControlSink(AudioSink):
         speech end. Push-to-talk recordings don't use VAD since the user
         explicitly controls the recording duration.
 
-        When disabled, clears the received audio flag and resets VAD state
-        to ensure clean state for the next recording session.
+        Creates a fresh VAD analyzer for each recording session to ensure
+        completely clean state and eliminate any timing or state corruption issues.
         """
         self._is_vad_enabled = enabled
         self._has_received_audio_for_vad = False  # Reset on state change
-        if self._vad_analyzer:
-            self._vad_analyzer.reset()
+        
+        if enabled:
+            # CREATE fresh VAD analyzer for this recording session
+            self._vad_analyzer = VADAnalyzer(
+                on_speech_end=self._handle_vad_speech_end,
+                sample_rate=Config.VAD_SAMPLE_RATE,
+                frame_duration_ms=Config.VAD_FRAME_DURATION_MS,
+                min_speech_duration_ms=Config.VAD_MIN_SPEECH_DURATION_MS,
+                silence_timeout_ms=Config.VAD_SILENCE_TIMEOUT_MS,
+                grace_period_ms=Config.VAD_GRACE_PERIOD_MS,
+                loop=self._loop,
+            )
+        else:
+            # DESTROY VAD analyzer when disabled
+            self._vad_analyzer = None
+        
+        # Clear VAD buffers for fresh start
+        self._vad_raw_buffer.clear()
+        self._vad_resampled_buffer.clear()
+        self._vad_resample_state = None
             
     def update_session_id(self) -> None:
         """
@@ -652,8 +672,8 @@ class ManualControlSink(AudioSink):
             self._vad_raw_buffer.clear()
             self._vad_resampled_buffer.clear()
             self._vad_resample_state = None
-            if self._vad_analyzer:
-                self._vad_analyzer.reset()
+            # Destroy VAD analyzer to ensure fresh state for next session
+            self._vad_analyzer = None
 
         # SIMPLIFIED CLEANUP: Comprehensive cleanup for all users
         # Ensures complete clean state for next interaction
@@ -863,8 +883,8 @@ class ManualControlSink(AudioSink):
             self._vad_raw_buffer.clear()
             self._vad_resampled_buffer.clear()
             self._vad_resample_state = None
-            if self._vad_analyzer:
-                self._vad_analyzer.reset()
+            # Destroy VAD analyzer to ensure fresh state for next session
+            self._vad_analyzer = None
 
         # SIMPLIFIED CLEANUP: Comprehensive cleanup instead of individual + comprehensive
         # This is more robust and eliminates redundant logic
@@ -908,16 +928,10 @@ class ManualControlSink(AudioSink):
         The VADAnalyzer handles the state machine for detecting sustained
         speech and meaningful silence periods that indicate end-of-command.
         """
+        # VAD analyzer is created by enable_vad() method for each recording session
         if not self._vad_analyzer:
-            self._vad_analyzer = VADAnalyzer(
-                on_speech_end=self._handle_vad_speech_end,
-                sample_rate=Config.VAD_SAMPLE_RATE,
-                frame_duration_ms=Config.VAD_FRAME_DURATION_MS,
-                min_speech_duration_ms=Config.VAD_MIN_SPEECH_DURATION_MS,
-                silence_timeout_ms=Config.VAD_SILENCE_TIMEOUT_MS,
-                grace_period_ms=Config.VAD_GRACE_PERIOD_MS,
-                loop=self._loop,
-            )
+            logger.warning("VAD processing called but no analyzer exists - VAD not enabled")
+            return
 
         # Buffer raw audio before resampling, similar to the wake word path
         self._vad_raw_buffer.extend(pcm_data)
