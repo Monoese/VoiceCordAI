@@ -18,12 +18,25 @@ import numpy as np
 import webrtcvad
 from discord.ext import voice_recv
 from openwakeword.model import Model
+import openwakeword
 
 from src.bot.state import BotState, BotStateEnum, RecordingMethod
 from src.config.config import Config
 from src.utils.logger import get_logger
 
 logger = get_logger(__name__)
+
+# Detect OpenWakeWord version for API compatibility
+OWW_VERSION = getattr(openwakeword, '__version__', '0.4.0')
+if '0.4' in OWW_VERSION:
+    OWW_PARAM_NAME = 'wakeword_model_paths'
+elif '0.6' in OWW_VERSION:
+    OWW_PARAM_NAME = 'wakeword_models'
+else:
+    # Default to newer API for future versions
+    OWW_PARAM_NAME = 'wakeword_models'
+
+logger.info(f"OpenWakeWord version {OWW_VERSION} detected, using parameter '{OWW_PARAM_NAME}'")
 
 
 class CleanupMetrics:
@@ -484,10 +497,16 @@ class ManualControlSink(AudioSink):
                         f"Wake word model file not found: {model_path}"
                     )
 
-                self._detectors[user_id] = Model(
-                    wakeword_models=[model_path],
-                    vad_threshold=Config.WAKE_WORD_VAD_THRESHOLD,
-                )
+                # Use the appropriate parameter name based on OpenWakeWord version
+                model_kwargs = {
+                    OWW_PARAM_NAME: [model_path],
+                    'inference_framework': 'onnx'  # Explicitly use ONNX
+                }
+                # Only add vad_threshold for 0.6+ (0.4.x doesn't support it)
+                if OWW_PARAM_NAME == 'wakeword_models':
+                    model_kwargs['vad_threshold'] = Config.WAKE_WORD_VAD_THRESHOLD
+                
+                self._detectors[user_id] = Model(**model_kwargs)
                 self._user_audio_buffers[user_id] = bytearray()
                 self._ww_resampled_buffers[user_id] = bytearray()
                 self._ww_resample_state[user_id] = None
