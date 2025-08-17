@@ -499,11 +499,11 @@ class ManualControlSink(AudioSink):
 
                 # Use the appropriate parameter name based on OpenWakeWord version
                 model_kwargs = {
-                    OWW_PARAM_NAME: [model_path],
-                    'inference_framework': 'onnx'  # Explicitly use ONNX
+                    OWW_PARAM_NAME: [model_path]
                 }
-                # Only add vad_threshold for 0.6+ (0.4.x doesn't support it)
+                # Only add inference_framework and vad_threshold for 0.6+ (0.4.x doesn't support them)
                 if OWW_PARAM_NAME == 'wakeword_models':
+                    model_kwargs['inference_framework'] = 'onnx'
                     model_kwargs['vad_threshold'] = Config.WAKE_WORD_VAD_THRESHOLD
                 
                 self._detectors[user_id] = Model(**model_kwargs)
