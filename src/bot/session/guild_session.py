@@ -208,12 +208,30 @@ class GuildSession:
             )
             await self.switch_mode(new_mode)
 
+    async def _interrupt_ongoing_playback(self) -> None:
+        """Interrupts any ongoing audio playback and AI response generation.
+        
+        This method stops audio playback without affecting the audio sink/reception,
+        and cancels any AI responses being generated to ensure clean state for recording.
+        """
+        # Stop voice client playback immediately
+        self.voice_connection.stop_playback()
+
+        # Cancel any ongoing AI response generation
+        if not await self.ai_coordinator.cancel_ongoing_response():
+            logger.warning(
+                f"Failed to cancel ongoing AI response for guild {self.guild.id}"
+            )
+
     async def handle_pushtotalk_reaction(self, user: discord.User, added: bool) -> None:
         async with self._action_lock:
             if self.bot_state.mode != BotModeEnum.ManualControl:
                 return
 
             if added and self.bot_state.current_state == BotStateEnum.STANDBY:
+                # Interrupt any ongoing playback before starting recording
+                await self._interrupt_ongoing_playback()
+
                 # This transition is immediate, no cues.
                 if isinstance(self._audio_sink, ManualControlSink):
                     self._audio_sink.enable_vad(False)
@@ -246,6 +264,9 @@ class GuildSession:
             ):
                 return
 
+            # Interrupt any ongoing playback before starting recording
+            await self._interrupt_ongoing_playback()
+
             # Enable VAD for the upcoming recording session.
             if isinstance(self._audio_sink, ManualControlSink):
                 self._audio_sink.enable_vad(True)
@@ -256,8 +277,8 @@ class GuildSession:
             if isinstance(self._audio_sink, ManualControlSink):
                 self._audio_sink.update_session_id()
 
-            # Commented out to test if cue playback disrupts audio reception
-            # await self.audio_playback_manager.play_cue("start_recording")
+            # Play the cue to signal to the user that recording has started
+            await self.audio_playback_manager.play_cue("start_recording")
 
     async def on_vad_speech_end(self, audio_data: bytes) -> None:
         async with self._action_lock:
