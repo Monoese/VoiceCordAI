@@ -1,5 +1,5 @@
 import pytest
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import MagicMock
 
 from src.bot.state import BotState, BotStateEnum, RecordingMethod
 
@@ -50,7 +50,7 @@ async def test_set_state_when_already_in_state(bot_state: BotState):
     """
     # Arrange - ensure we're in IDLE
     assert bot_state.current_state == BotStateEnum.IDLE
-    
+
     # Act
     success = await bot_state.set_state(BotStateEnum.IDLE)
 
@@ -66,7 +66,7 @@ async def test_start_recording_from_standby(bot_state: BotState, mock_user: Magi
     """
     # Arrange
     await bot_state.set_state(BotStateEnum.STANDBY)
-    
+
     # Act
     await bot_state.start_recording(mock_user, RecordingMethod.PushToTalk)
 
@@ -77,13 +77,15 @@ async def test_start_recording_from_standby(bot_state: BotState, mock_user: Magi
 
 
 @pytest.mark.asyncio
-async def test_start_recording_when_not_in_standby(bot_state: BotState, mock_user: MagicMock):
+async def test_start_recording_when_not_in_standby(
+    bot_state: BotState, mock_user: MagicMock
+):
     """
     Tests that start_recording does nothing when not in STANDBY state.
     """
     # Arrange - ensure we're in IDLE
     assert bot_state.current_state == BotStateEnum.IDLE
-    
+
     # Act
     await bot_state.start_recording(mock_user, RecordingMethod.PushToTalk)
 
@@ -102,7 +104,7 @@ async def test_stop_recording_from_recording(bot_state: BotState, mock_user: Mag
     await bot_state.set_state(BotStateEnum.STANDBY)
     await bot_state.start_recording(mock_user, RecordingMethod.WakeWord)
     assert bot_state.current_state == BotStateEnum.RECORDING
-    
+
     # Act
     await bot_state.stop_recording()
 
@@ -119,7 +121,7 @@ async def test_stop_recording_when_not_recording(bot_state: BotState):
     """
     # Arrange
     await bot_state.set_state(BotStateEnum.STANDBY)
-    
+
     # Act
     await bot_state.stop_recording()
 
@@ -135,7 +137,7 @@ async def test_reset_to_idle(bot_state: BotState, mock_user: MagicMock):
     # Arrange - put bot in STANDBY with some state
     await bot_state.set_state(BotStateEnum.STANDBY)
     await bot_state.grant_consent(mock_user.id)
-    
+
     # Act
     await bot_state.reset_to_idle()
 
@@ -169,7 +171,7 @@ async def test_enter_connection_error_state(bot_state: BotState):
     """
     # Arrange
     await bot_state.set_state(BotStateEnum.STANDBY)
-    
+
     # Act
     result = await bot_state.enter_connection_error_state()
 
@@ -189,7 +191,7 @@ async def test_enter_connection_error_state_when_already_in_error(bot_state: Bot
     await bot_state.set_state(BotStateEnum.STANDBY)
     await bot_state.enter_connection_error_state()
     assert bot_state.current_state == BotStateEnum.CONNECTION_ERROR
-    
+
     # Act
     result = await bot_state.enter_connection_error_state()
 
@@ -207,7 +209,7 @@ async def test_recover_to_standby(bot_state: BotState):
     await bot_state.set_state(BotStateEnum.STANDBY)
     await bot_state.enter_connection_error_state()
     assert bot_state.current_state == BotStateEnum.CONNECTION_ERROR
-    
+
     # Act
     result = await bot_state.recover_to_standby()
 
@@ -224,7 +226,7 @@ async def test_recover_to_standby_when_not_in_error(bot_state: BotState):
     """
     # Arrange - ensure we're in IDLE
     assert bot_state.current_state == BotStateEnum.IDLE
-    
+
     # Act
     result = await bot_state.recover_to_standby()
 
@@ -241,7 +243,7 @@ async def test_set_active_ai_provider_name(bot_state: BotState):
     # Arrange
     initial_provider = bot_state.active_ai_provider_name
     new_provider = "gemini"
-    
+
     # Act
     await bot_state.set_active_ai_provider_name(new_provider)
 
@@ -256,14 +258,14 @@ async def test_consent_management(bot_state: BotState):
     Tests granting and revoking consent for users.
     """
     user_id = 123456789
-    
+
     # Initially no consent
     assert user_id not in bot_state.get_consented_user_ids()
-    
+
     # Grant consent
     await bot_state.grant_consent(user_id)
     assert user_id in bot_state.get_consented_user_ids()
-    
+
     # Revoke consent
     await bot_state.revoke_consent(user_id)
     assert user_id not in bot_state.get_consented_user_ids()

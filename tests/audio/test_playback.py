@@ -1,5 +1,5 @@
 import asyncio
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 import pytest
 import discord
@@ -22,7 +22,9 @@ def audio_playback_manager(mock_guild: MagicMock) -> AudioPlaybackManager:
     return AudioPlaybackManager(mock_guild)
 
 
-def test_audio_playback_manager_initialization(audio_playback_manager: AudioPlaybackManager):
+def test_audio_playback_manager_initialization(
+    audio_playback_manager: AudioPlaybackManager,
+):
     """Tests that the AudioPlaybackManager initializes with the correct default state."""
     assert isinstance(audio_playback_manager.audio_chunk_queue, asyncio.Queue)
     assert audio_playback_manager._current_stream_id is None
@@ -63,12 +65,14 @@ async def test_start_new_audio_stream(audio_playback_manager: AudioPlaybackManag
 
 
 @pytest.mark.asyncio
-async def test_start_new_audio_stream_replaces_old(audio_playback_manager: AudioPlaybackManager):
+async def test_start_new_audio_stream_replaces_old(
+    audio_playback_manager: AudioPlaybackManager,
+):
     """Tests that starting a new stream correctly handles the transition from an old one."""
     old_stream_id = "old-stream"
     new_stream_id = "new-stream"
     response_format = (24000, 1)
-    
+
     await audio_playback_manager.start_new_audio_stream(old_stream_id, response_format)
     audio_playback_manager._playback_control_event.clear()  # Reset for the next action
 
@@ -122,7 +126,9 @@ async def test_end_audio_stream(audio_playback_manager: AudioPlaybackManager):
 
 
 @pytest.mark.asyncio
-async def test_end_audio_stream_with_override(audio_playback_manager: AudioPlaybackManager):
+async def test_end_audio_stream_with_override(
+    audio_playback_manager: AudioPlaybackManager,
+):
     """Tests signaling the end of a specific stream using override."""
     audio_playback_manager._current_stream_id = "active-stream"
     override_stream_id = "override-stream"
@@ -136,7 +142,9 @@ async def test_end_audio_stream_with_override(audio_playback_manager: AudioPlayb
 
 
 @pytest.mark.asyncio
-async def test_end_audio_stream_idempotent(audio_playback_manager: AudioPlaybackManager):
+async def test_end_audio_stream_idempotent(
+    audio_playback_manager: AudioPlaybackManager,
+):
     """Tests that signaling EOS for a stream is idempotent."""
     stream_id = "test-stream-1"
     audio_playback_manager._current_stream_id = stream_id
