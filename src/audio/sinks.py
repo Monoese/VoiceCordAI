@@ -54,7 +54,7 @@ class CleanupMetrics:
             logger.warning(
                 f"Race condition prevented: captured={captured_id}, current={current_id}"
             )
-    
+
     def record_session_id_mismatch(self, expected_session_id, actual_session_id):
         """Track when session ID mismatch prevents cross-session contamination."""
         if expected_session_id != actual_session_id:
@@ -458,11 +458,13 @@ class ManualControlSink(AudioSink):
 
         # Add cleanup metrics tracking
         self._cleanup_metrics = CleanupMetrics()
-        
+
         # Session ID tracking for cross-session contamination prevention
         self._session_id_at_creation = self._bot_state.current_session_id
         self._active_session_id = self._session_id_at_creation
-        logger.debug(f"ManualControlSink created for session {self._session_id_at_creation}")
+        logger.debug(
+            f"ManualControlSink created for session {self._session_id_at_creation}"
+        )
 
         for user_id in initial_consented_users:
             self.add_user(user_id)
@@ -604,7 +606,7 @@ class ManualControlSink(AudioSink):
         """
         self._is_vad_enabled = enabled
         self._has_received_audio_for_vad = False  # Reset on state change
-        
+
         if enabled:
             # CREATE fresh VAD analyzer for this recording session
             self._vad_analyzer = VADAnalyzer(
@@ -619,16 +621,16 @@ class ManualControlSink(AudioSink):
         else:
             # DESTROY VAD analyzer when disabled
             self._vad_analyzer = None
-        
+
         # Clear VAD buffers for fresh start
         self._vad_raw_buffer.clear()
         self._vad_resampled_buffer.clear()
         self._vad_resample_state = None
-            
+
     def update_session_id(self) -> None:
         """
         Updates the active session ID to match the current bot state session.
-        
+
         This should be called when a new recording starts to ensure the sink
         is synchronized with the current session and prevent cross-session contamination.
         """
@@ -651,13 +653,15 @@ class ManualControlSink(AudioSink):
         # SESSION ID VALIDATION: Prevent cross-session contamination
         current_session_id = self._bot_state.current_session_id
         if current_session_id != self._active_session_id:
-            self._cleanup_metrics.record_session_id_mismatch(self._active_session_id, current_session_id)
+            self._cleanup_metrics.record_session_id_mismatch(
+                self._active_session_id, current_session_id
+            )
             logger.warning(
                 f"Session ID mismatch in stop_and_get_audio: sink={self._active_session_id}, state={current_session_id}. "
                 f"Returning empty audio to prevent contamination."
             )
             return b""
-        
+
         # Capture authority user ID for logging purposes
         captured_authority_id = self._bot_state.authority_user_id
 
@@ -802,7 +806,12 @@ class ManualControlSink(AudioSink):
                 f"Error in ManualControlSink VAD monitor loop: {e}", exc_info=True
             )
 
-    def _resample_audio(self, raw_chunk: bytes, resample_state: Optional[any], target_sample_rate: int = 16000) -> tuple[bytes, Optional[any]]:
+    def _resample_audio(
+        self,
+        raw_chunk: bytes,
+        resample_state: Optional[any],
+        target_sample_rate: int = 16000,
+    ) -> tuple[bytes, Optional[any]]:
         """
         Generic helper method for resampling Discord audio to target format.
 
@@ -837,7 +846,11 @@ class ManualControlSink(AudioSink):
         Uses audioop.ratecv() which maintains per-user conversion state
         for smooth resampling across chunk boundaries.
         """
-        resampled_audio, state = self._resample_audio(raw_chunk, self._ww_resample_state.get(user_id), Config.WAKE_WORD_SAMPLE_RATE)
+        resampled_audio, state = self._resample_audio(
+            raw_chunk,
+            self._ww_resample_state.get(user_id),
+            Config.WAKE_WORD_SAMPLE_RATE,
+        )
         self._ww_resample_state[user_id] = state
         return resampled_audio
 
@@ -854,13 +867,15 @@ class ManualControlSink(AudioSink):
         # SESSION ID VALIDATION: Prevent cross-session contamination
         current_session_id = self._bot_state.current_session_id
         if current_session_id != self._active_session_id:
-            self._cleanup_metrics.record_session_id_mismatch(self._active_session_id, current_session_id)
+            self._cleanup_metrics.record_session_id_mismatch(
+                self._active_session_id, current_session_id
+            )
             logger.warning(
                 f"Session ID mismatch in VAD speech end: sink={self._active_session_id}, state={current_session_id}. "
                 f"Skipping callback to prevent contamination."
             )
             return
-        
+
         # ATOMIC CAPTURE: Prevent race condition by capturing state for logging
         authority_user_id_at_speech_end = self._bot_state.authority_user_id
 
@@ -930,7 +945,9 @@ class ManualControlSink(AudioSink):
         """
         # VAD analyzer is created by enable_vad() method for each recording session
         if not self._vad_analyzer:
-            logger.warning("VAD processing called but no analyzer exists - VAD not enabled")
+            logger.warning(
+                "VAD processing called but no analyzer exists - VAD not enabled"
+            )
             return
 
         # Buffer raw audio before resampling, similar to the wake word path
@@ -941,7 +958,9 @@ class ManualControlSink(AudioSink):
             raw_chunk = self._vad_raw_buffer[:min_vad_raw_bytes]
             del self._vad_raw_buffer[:min_vad_raw_bytes]
 
-            resampled_audio, self._vad_resample_state = self._resample_audio(raw_chunk, self._vad_resample_state, Config.VAD_SAMPLE_RATE)
+            resampled_audio, self._vad_resample_state = self._resample_audio(
+                raw_chunk, self._vad_resample_state, Config.VAD_SAMPLE_RATE
+            )
             self._vad_resampled_buffer.extend(resampled_audio)
 
         # Process the resampled buffer in VAD-compatible frames
@@ -969,7 +988,9 @@ class ManualControlSink(AudioSink):
         if current_session_id != self._active_session_id:
             # Don't log every frame to avoid spam - use modulo for periodic logging
             if hash(data.pcm) % 100 == 0:  # Log ~1% of frames
-                self._cleanup_metrics.record_session_id_mismatch(self._active_session_id, current_session_id)
+                self._cleanup_metrics.record_session_id_mismatch(
+                    self._active_session_id, current_session_id
+                )
             return
 
         # Capture state atomically for consistent logging

@@ -81,7 +81,9 @@ class VoiceCog(commands.Cog):
         self._sessions.clear()
         logger.info("All active sessions cleaned up.")
 
-    async def _handle_connect_command(self, ctx: commands.Context, mode: BotModeEnum) -> None:
+    async def _handle_connect_command(
+        self, ctx: commands.Context, mode: BotModeEnum
+    ) -> None:
         """
         Shared logic for connecting the bot in different modes.
 
@@ -100,19 +102,25 @@ class VoiceCog(commands.Cog):
             try:
                 success = await session.initialize_session(ctx, mode)
                 if not success:
-                    mode_name = "Manual" if mode == BotModeEnum.ManualControl else "Realtime"
+                    mode_name = (
+                        "Manual" if mode == BotModeEnum.ManualControl else "Realtime"
+                    )
                     logger.warning(
                         f"{mode_name} connection process failed for guild {ctx.guild.id}. Cleaning up session."
                     )
                     if ctx.guild.id in self._sessions:
                         del self._sessions[ctx.guild.id]
             except StateTransitionError as e:
-                mode_name = "manual" if mode == BotModeEnum.ManualControl else "realtime"
-                logger.critical(
-                    f"Caught unrecoverable state error in guild {ctx.guild.id} during {mode_name} connect: {e}", 
-                    exc_info=True
+                mode_name = (
+                    "manual" if mode == BotModeEnum.ManualControl else "realtime"
                 )
-                await ctx.send("An unexpected internal error occurred. The session will now terminate.")
+                logger.critical(
+                    f"Caught unrecoverable state error in guild {ctx.guild.id} during {mode_name} connect: {e}",
+                    exc_info=True,
+                )
+                await ctx.send(
+                    "An unexpected internal error occurred. The session will now terminate."
+                )
                 await session.cleanup()
                 if ctx.guild.id in self._sessions:
                     del self._sessions[ctx.guild.id]
@@ -164,8 +172,8 @@ class VoiceCog(commands.Cog):
                 await session.handle_reaction_add(reaction, user)
             except StateTransitionError as e:
                 logger.critical(
-                    f"Caught unrecoverable state error in guild {reaction.message.guild.id} during reaction add: {e}", 
-                    exc_info=True
+                    f"Caught unrecoverable state error in guild {reaction.message.guild.id} during reaction add: {e}",
+                    exc_info=True,
                 )
                 # Clean up the session and notify users
                 await session.cleanup()
@@ -192,8 +200,8 @@ class VoiceCog(commands.Cog):
                 await session.handle_reaction_remove(reaction, user)
             except StateTransitionError as e:
                 logger.critical(
-                    f"Caught unrecoverable state error in guild {reaction.message.guild.id} during reaction remove: {e}", 
-                    exc_info=True
+                    f"Caught unrecoverable state error in guild {reaction.message.guild.id} during reaction remove: {e}",
+                    exc_info=True,
                 )
                 # Clean up the session and notify users
                 await session.cleanup()
@@ -253,10 +261,12 @@ class VoiceCog(commands.Cog):
             await session.set_provider(ctx, provider_name)
         except StateTransitionError as e:
             logger.critical(
-                f"Caught unrecoverable state error in guild {ctx.guild.id} during set provider: {e}", 
-                exc_info=True
+                f"Caught unrecoverable state error in guild {ctx.guild.id} during set provider: {e}",
+                exc_info=True,
             )
-            await ctx.send("An unexpected internal error occurred. The session will now terminate.")
+            await ctx.send(
+                "An unexpected internal error occurred. The session will now terminate."
+            )
             await session.cleanup()
             if ctx.guild.id in self._sessions:
                 del self._sessions[ctx.guild.id]
@@ -287,10 +297,12 @@ class VoiceCog(commands.Cog):
                 await ctx.send("Session terminated successfully.")
             except StateTransitionError as e:
                 logger.critical(
-                    f"Caught unrecoverable state error in guild {ctx.guild.id} during disconnect: {e}", 
-                    exc_info=True
+                    f"Caught unrecoverable state error in guild {ctx.guild.id} during disconnect: {e}",
+                    exc_info=True,
                 )
-                await ctx.send("An unexpected internal error occurred during cleanup. The session has been forcefully removed.")
+                await ctx.send(
+                    "An unexpected internal error occurred during cleanup. The session has been forcefully removed."
+                )
             except SessionError as e:
                 logger.error(
                     f"Session error during cleanup for guild {ctx.guild.id}: {e}",
