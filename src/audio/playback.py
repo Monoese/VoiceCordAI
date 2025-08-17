@@ -86,13 +86,13 @@ class AudioPlaybackManager:
         if not self.guild.voice_client:
             return
 
-        cue_path = ""
+        cue_path = None
         if cue_name == "start_recording":
             cue_path = Config.AUDIO_CUE_START_RECORDING
         elif cue_name == "end_recording":
             cue_path = Config.AUDIO_CUE_END_RECORDING
 
-        if not cue_path or not os.path.exists(cue_path):
+        if not cue_path or not cue_path.exists():
             logger.error(f"Audio cue '{cue_name}' not found at path: {cue_path}")
             return
 
@@ -100,7 +100,7 @@ class AudioPlaybackManager:
         stream_started = False
         try:
             # Decode the mp3 file into raw PCM audio using pydub
-            cue_audio = AudioSegment.from_mp3(cue_path)
+            cue_audio = AudioSegment.from_mp3(str(cue_path))
             cue_format = (cue_audio.frame_rate, cue_audio.channels)
 
             # The manager loop will see this new stream and interrupt any current playback

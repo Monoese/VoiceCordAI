@@ -8,7 +8,6 @@ responsible for processing raw audio from users according to its mode's logic.
 
 import asyncio
 import audioop
-import os
 import threading
 import time
 from abc import ABC, abstractmethod
@@ -478,8 +477,15 @@ class ManualControlSink(AudioSink):
         try:
             # CONCURRENCY FIX: Use dedicated lock for all user data operations
             with self._user_data_lock:
+                # Validate wake word model file exists
+                model_path = str(Config.WAKE_WORD_MODEL_PATH)
+                if not Config.WAKE_WORD_MODEL_PATH.exists():
+                    raise FileNotFoundError(
+                        f"Wake word model file not found: {model_path}"
+                    )
+
                 self._detectors[user_id] = Model(
-                    wakeword_models=[Config.WAKE_WORD_MODEL_PATH],
+                    wakeword_models=[model_path],
                     vad_threshold=Config.WAKE_WORD_VAD_THRESHOLD,
                 )
                 self._user_audio_buffers[user_id] = bytearray()
@@ -1081,9 +1087,7 @@ class ManualControlSink(AudioSink):
                 prediction = model.predict(ww_chunk_np)
                 logger.debug(f"Wake word prediction for user {user.id}: {prediction}")
 
-                model_name = os.path.splitext(
-                    os.path.basename(Config.WAKE_WORD_MODEL_PATH)
-                )[0]
+                model_name = Config.WAKE_WORD_MODEL_PATH.stem
 
                 if (
                     model_name in prediction

@@ -60,10 +60,8 @@ class Config:
     REACTION_TRIGGER_PTT: str = os.getenv("REACTION_TRIGGER_PTT", "🎙️")
 
     # --- Audio Cue Paths ---
-    AUDIO_CUE_START_RECORDING: str = str(
-        BASE_DIR / "assets/audio_cues/start_recording.mp3"
-    )
-    AUDIO_CUE_END_RECORDING: str = str(BASE_DIR / "assets/audio_cues/end_recording.mp3")
+    AUDIO_CUE_START_RECORDING: Path = BASE_DIR / "assets/audio_cues/start_recording.mp3"
+    AUDIO_CUE_END_RECORDING: Path = BASE_DIR / "assets/audio_cues/end_recording.mp3"
 
     # --- Audio Processing Settings ---
     # General Audio
@@ -78,7 +76,7 @@ class Config:
 
     # --- Wake Word & VAD Settings ---
     # openWakeWord settings
-    WAKE_WORD_MODEL_PATH: str = str(BASE_DIR / "assets/wakeword_models/alexa_v0.1.onnx")
+    WAKE_WORD_MODEL_PATH: Path = BASE_DIR / "assets/wakeword_models/alexa_v0.1.onnx"
     WAKE_WORD_THRESHOLD: float = 0.5  # Confidence threshold for detection
     # VAD inside openWakeWord to improve ww accuracy.
     WAKE_WORD_VAD_THRESHOLD: float = 0.5
