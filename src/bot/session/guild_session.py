@@ -210,7 +210,7 @@ class GuildSession:
 
     async def _interrupt_ongoing_playback(self) -> None:
         """Interrupts any ongoing audio playback and AI response generation.
-        
+
         This method stops audio playback without affecting the audio sink/reception,
         and cancels any AI responses being generated to ensure clean state for recording.
         """
