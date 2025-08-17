@@ -1,8 +1,19 @@
+# Discord Bot Framework
 discord.py
 discord-ext-voice-recv
+
+# Configuration & Environment
 python-dotenv
+
+# Audio Processing & AI
 pydub
-websockets
 audioop-lts
+websockets
+
+# AI Service Providers
 openai
 google-genai
+
+# Wake Word & Voice Activity Detection
+openwakeword
+webrtcvad-wheels
