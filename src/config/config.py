@@ -93,8 +93,8 @@ class Config:
     VAD_SILENCE_TIMEOUT_MS: int = 1000  # Silence after speech to stop recording
 
     # --- Logging Configuration ---
-    LOG_LEVEL: Union[int, str] = logging.INFO  # General log level for file logs
-    LOG_CONSOLE_LEVEL: Union[int, str] = logging.INFO  # Log level for console output
+    LOG_LEVEL: Union[int, str] = os.getenv("LOG_LEVEL", "INFO")  # General log level for file logs
+    LOG_CONSOLE_LEVEL: Union[int, str] = os.getenv("LOG_CONSOLE_LEVEL", "INFO")  # Log level for console output
     LOG_MAX_SIZE: int = (
         5 * 1024 * 1024
     )  # Max size of a log file before rotation (in bytes)
