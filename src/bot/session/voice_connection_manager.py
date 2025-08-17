@@ -146,6 +146,13 @@ class VoiceConnectionManager:
             voice_client.stop_listening()
             logger.info("Stopped listening.")
 
+    def stop_playback(self) -> None:
+        """Stops any ongoing audio playback immediately without affecting audio reception."""
+        voice_client = self._get_voice_client()
+        if voice_client and voice_client.is_playing():
+            voice_client.stop_playing()
+            logger.info("Stopped audio playback.")
+
     def is_connected(self) -> bool:
         """
         Check if the bot is connected to a voice channel.

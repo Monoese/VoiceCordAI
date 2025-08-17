@@ -226,7 +226,8 @@ class AudioPlaybackManager:
                 f"Playback monitor for stream '{stream.stream_id}' in guild {self.guild.id} cancelled."
             )
             if voice_client.is_playing() or voice_client.is_paused():
-                voice_client.stop()
+                # Use stop_playing() instead of stop() to preserve audio reception
+                voice_client.stop_playing()
         except Exception as e:
             logger.error(
                 f"Error in playback monitor for guild {self.guild.id}: {e}",
