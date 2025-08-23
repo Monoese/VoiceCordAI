@@ -27,16 +27,18 @@ from src.utils.logger import get_logger
 logger = get_logger(__name__)
 
 # Detect OpenWakeWord version for API compatibility
-OWW_VERSION = getattr(openwakeword, '__version__', '0.4.0')
-if '0.4' in OWW_VERSION:
-    OWW_PARAM_NAME = 'wakeword_model_paths'
-elif '0.6' in OWW_VERSION:
-    OWW_PARAM_NAME = 'wakeword_models'
+OWW_VERSION = getattr(openwakeword, "__version__", "0.4.0")
+if "0.4" in OWW_VERSION:
+    OWW_PARAM_NAME = "wakeword_model_paths"
+elif "0.6" in OWW_VERSION:
+    OWW_PARAM_NAME = "wakeword_models"
 else:
     # Default to newer API for future versions
-    OWW_PARAM_NAME = 'wakeword_models'
+    OWW_PARAM_NAME = "wakeword_models"
 
-logger.info(f"OpenWakeWord version {OWW_VERSION} detected, using parameter '{OWW_PARAM_NAME}'")
+logger.info(
+    f"OpenWakeWord version {OWW_VERSION} detected, using parameter '{OWW_PARAM_NAME}'"
+)
 
 
 class CleanupMetrics:
@@ -420,6 +422,7 @@ class ManualControlSink(AudioSink):
         initial_consented_users: Set[int],
         on_wake_word_detected: Callable[[discord.User], Awaitable[None]],
         on_vad_speech_end: Callable[[bytes], Awaitable[None]],
+        action_lock: asyncio.Lock,
     ):
         super().__init__()
         self._bot_state = bot_state
@@ -436,9 +439,7 @@ class ManualControlSink(AudioSink):
         self._vad_resample_state = None
 
         # Thread-safe synchronization primitives for TOCTOU fix
-        self._authority_buffer_lock = (
-            threading.Lock()
-        )  # Protects authority audio buffer operations
+        self._action_lock = action_lock
         self._ww_buffer_locks: Dict[
             int, threading.Lock
         ] = {}  # Per-user wake word buffer protection
@@ -498,14 +499,12 @@ class ManualControlSink(AudioSink):
                     )
 
                 # Use the appropriate parameter name based on OpenWakeWord version
-                model_kwargs = {
-                    OWW_PARAM_NAME: [model_path]
-                }
+                model_kwargs = {OWW_PARAM_NAME: [model_path]}
                 # Only add inference_framework and vad_threshold for 0.6+ (0.4.x doesn't support them)
-                if OWW_PARAM_NAME == 'wakeword_models':
-                    model_kwargs['inference_framework'] = 'onnx'
-                    model_kwargs['vad_threshold'] = Config.WAKE_WORD_VAD_THRESHOLD
-                
+                if OWW_PARAM_NAME == "wakeword_models":
+                    model_kwargs["inference_framework"] = "onnx"
+                    model_kwargs["vad_threshold"] = Config.WAKE_WORD_VAD_THRESHOLD
+
                 self._detectors[user_id] = Model(**model_kwargs)
                 self._user_audio_buffers[user_id] = bytearray()
                 self._ww_resampled_buffers[user_id] = bytearray()
@@ -692,17 +691,15 @@ class ManualControlSink(AudioSink):
 
         self.enable_vad(False)
 
-        # TOCTOU Fix: Atomic authority buffer capture and clear
-        with self._authority_buffer_lock:
-            audio_data = bytes(self._authority_buffer)
-            self._authority_buffer.clear()
+        audio_data = bytes(self._authority_buffer)
+        self._authority_buffer.clear()
 
-            # Clear VAD-specific state
-            self._vad_raw_buffer.clear()
-            self._vad_resampled_buffer.clear()
-            self._vad_resample_state = None
-            # Destroy VAD analyzer to ensure fresh state for next session
-            self._vad_analyzer = None
+        # Clear VAD-specific state
+        self._vad_raw_buffer.clear()
+        self._vad_resampled_buffer.clear()
+        self._vad_resample_state = None
+        # Destroy VAD analyzer to ensure fresh state for next session
+        self._vad_analyzer = None
 
         # SIMPLIFIED CLEANUP: Comprehensive cleanup for all users
         # Ensures complete clean state for next interaction
@@ -906,25 +903,23 @@ class ManualControlSink(AudioSink):
 
         self.enable_vad(False)
 
-        # TOCTOU Fix: Atomic buffer capture and clear
-        with self._authority_buffer_lock:
-            if not self._authority_buffer:
-                # If there's no audio, still perform cleanup to ensure clean state
-                self._clear_all_wake_word_buffers()
-                logger.debug(
-                    f"VAD cleanup with no audio: user_id={authority_user_id_at_speech_end}"
-                )
-                return
+        if not self._authority_buffer:
+            # If there's no audio, still perform cleanup to ensure clean state
+            self._clear_all_wake_word_buffers()
+            logger.debug(
+                f"VAD cleanup with no audio: user_id={authority_user_id_at_speech_end}"
+            )
+            return
 
-            audio_data = bytes(self._authority_buffer)
-            self._authority_buffer.clear()
+        audio_data = bytes(self._authority_buffer)
+        self._authority_buffer.clear()
 
-            # Clear VAD-specific buffers
-            self._vad_raw_buffer.clear()
-            self._vad_resampled_buffer.clear()
-            self._vad_resample_state = None
-            # Destroy VAD analyzer to ensure fresh state for next session
-            self._vad_analyzer = None
+        # Clear VAD-specific buffers
+        self._vad_raw_buffer.clear()
+        self._vad_resampled_buffer.clear()
+        self._vad_resample_state = None
+        # Destroy VAD analyzer to ensure fresh state for next session
+        self._vad_analyzer = None
 
         # SIMPLIFIED CLEANUP: Comprehensive cleanup instead of individual + comprehensive
         # This is more robust and eliminates redundant logic
@@ -1035,32 +1030,51 @@ class ManualControlSink(AudioSink):
         # Use captured state for consistent behavior
         if current_state == BotStateEnum.RECORDING:
             if is_authorized:
-                # TOCTOU Fix: Atomic check-and-write operation
-                with self._authority_buffer_lock:
-                    # Re-check state inside the lock to ensure atomicity
-                    if (
-                        self._bot_state.current_state == BotStateEnum.RECORDING
-                        and self._bot_state.is_authorized(user)
-                    ):
-                        self._authority_buffer.extend(data.pcm)
-                        logger.debug(
-                            f"Authority buffer updated: size={len(self._authority_buffer)}"
-                        )
+                # TOCTOU Fix: Schedule atomic operation on event loop since write() is called from Discord thread
+                asyncio.run_coroutine_threadsafe(
+                    self._atomic_authority_buffer_update(
+                        user, data.pcm, current_state, is_authorized
+                    ),
+                    self._loop,
+                )
+                # Don't wait to avoid blocking Discord's audio thread
 
-                        # Conditionally process VAD only for wake word recordings
-                        if (
-                            recording_method == RecordingMethod.WakeWord
-                            and self._is_vad_enabled
-                        ):
-                            # VAD flag race fix: Thread-safe flag update
-                            with self._vad_flag_lock:
-                                self._has_received_audio_for_vad = True
-                            # Schedule VAD processing on the event loop
-                            asyncio.run_coroutine_threadsafe(
-                                self._process_vad_async(data.pcm), self._loop
-                            )
+                # Conditionally process VAD only for wake word recordings
+                if (
+                    recording_method == RecordingMethod.WakeWord
+                    and self._is_vad_enabled
+                ):
+                    # VAD flag race fix: Thread-safe flag update
+                    with self._vad_flag_lock:
+                        self._has_received_audio_for_vad = True
+                    # Schedule VAD processing on the event loop
+                    asyncio.run_coroutine_threadsafe(
+                        self._process_vad_async(data.pcm), self._loop
+                    )
         elif current_state == BotStateEnum.STANDBY and user.id in self._detectors:
             self._process_standby_audio(user, data)
+
+    async def _atomic_authority_buffer_update(
+        self,
+        user: discord.User,
+        pcm_data: bytes,
+        captured_state: BotStateEnum,
+        captured_authorized: bool,
+    ) -> None:
+        """Atomically check state and update buffer under shared lock."""
+        async with self._action_lock:
+            # Re-validate state under lock
+            if (
+                self._bot_state.current_state
+                == captured_state
+                == BotStateEnum.RECORDING
+                and self._bot_state.is_authorized(user)
+                and captured_authorized
+            ):
+                self._authority_buffer.extend(pcm_data)
+                logger.debug(
+                    f"Authority buffer updated: size={len(self._authority_buffer)}"
+                )
 
     def _process_standby_audio(self, user: discord.User, data: voice_recv.VoiceData):
         """

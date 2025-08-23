@@ -17,7 +17,7 @@ from google.genai import errors as gemini_errors
 
 from src.audio.playback import AudioPlaybackManager
 from src.audio.processor import process_recorded_audio
-from src.audio.sinks import AudioSink, ManualControlSink, RealtimeMixingSink
+from src.audio.sinks import ManualControlSink, RealtimeMixingSink
 from src.bot.session.ai_service_coordinator import AIServiceCoordinator
 from src.bot.session.interaction_handler import InteractionHandler
 from src.bot.session.session_ui_manager import SessionUIManager
@@ -25,7 +25,6 @@ from src.bot.session.voice_connection_manager import VoiceConnectionManager
 from src.bot.state import BotState, BotModeEnum, BotStateEnum, RecordingMethod
 from src.config.config import Config
 from src.utils.logger import get_logger
-
 
 logger = get_logger(__name__)
 
@@ -400,6 +399,7 @@ class GuildSession:
                 initial_consented_users=consented_users,
                 on_wake_word_detected=self.on_wake_word_detected,
                 on_vad_speech_end=self.on_vad_speech_end,
+                action_lock=self._action_lock,
             )
         elif self.bot_state.mode == BotModeEnum.RealtimeTalk:
             self._audio_sink = RealtimeMixingSink(
