@@ -74,6 +74,15 @@ class Config:
     DISCORD_AUDIO_FRAME_RATE: int = 48000  # Samples per second, per channel
     DISCORD_AUDIO_CHANNELS: int = 2  # Number of audio channels (e.g., 2 for stereo)
 
+    # Audio chunk sizes for different processing stages
+    DISCORD_CHUNK_SIZE: int = 3840  # 20ms of 48kHz stereo (48000 * 2 * 2 / 50)
+    WAKE_WORD_CHUNK_SIZE: int = 1280  # 80ms of 16kHz mono (16000 * 2 / 25)
+    VAD_PROCESSING_CHUNK: int = 7680  # Minimum chunk size for resample operations
+
+    # Buffer size limits for audio processing
+    MAX_AUTHORITY_BUFFER_SIZE: int = 1024 * 1024  # 1MB limit for authority buffers
+    MAX_STANDBY_BUFFER_SIZE: int = 512 * 1024  # 512KB limit for standby buffers
+
     # --- Wake Word & VAD Settings ---
     # openWakeWord settings
     WAKE_WORD_MODEL_PATH: Path = BASE_DIR / "assets/wakeword_models/alexa_v0.1.onnx"
@@ -93,8 +102,12 @@ class Config:
     VAD_SILENCE_TIMEOUT_MS: int = 1000  # Silence after speech to stop recording
 
     # --- Logging Configuration ---
-    LOG_LEVEL: Union[int, str] = os.getenv("LOG_LEVEL", "INFO")  # General log level for file logs
-    LOG_CONSOLE_LEVEL: Union[int, str] = os.getenv("LOG_CONSOLE_LEVEL", "INFO")  # Log level for console output
+    LOG_LEVEL: Union[int, str] = os.getenv(
+        "LOG_LEVEL", "INFO"
+    )  # General log level for file logs
+    LOG_CONSOLE_LEVEL: Union[int, str] = os.getenv(
+        "LOG_CONSOLE_LEVEL", "INFO"
+    )  # Log level for console output
     LOG_MAX_SIZE: int = (
         5 * 1024 * 1024
     )  # Max size of a log file before rotation (in bytes)

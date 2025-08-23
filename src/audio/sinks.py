@@ -7,19 +7,27 @@ responsible for processing raw audio from users according to its mode's logic.
 """
 
 import asyncio
-import audioop
 import threading
 import time
 from abc import ABC, abstractmethod
 from typing import Any, Awaitable, Callable, Dict, List, Optional, Set
 
+import audioop
 import discord
 import numpy as np
+import openwakeword
 import webrtcvad
 from discord.ext import voice_recv
 from openwakeword.model import Model
-import openwakeword
 
+from src.audio.processing import (
+    UnifiedAudioProcessor,
+    AudioFormat,
+    DISCORD_FORMAT,
+    WAKE_WORD_FORMAT,
+    VAD_FORMAT,
+    ProcessingStrategy,
+)
 from src.bot.state import BotState, BotStateEnum, RecordingMethod
 from src.config.config import Config
 from src.utils.logger import get_logger
@@ -255,10 +263,8 @@ class RealtimeMixingSink(AudioSink):
         self._user_buffers: Dict[int, bytearray] = {}
 
         # Audio timing and format constants
-        # 20ms of 48kHz, 16-bit, stereo audio = 3840 bytes
-        self._chunk_size = (
-            48000 // 50 * Config.DISCORD_AUDIO_CHANNELS * Config.SAMPLE_WIDTH
-        )
+        # 20ms of 48kHz, 16-bit, stereo audio
+        self._chunk_size = Config.DISCORD_CHUNK_SIZE
         self._silence_chunk = (
             b"\x00" * self._chunk_size
         )  # Pre-computed silence for padding
@@ -429,14 +435,16 @@ class ManualControlSink(AudioSink):
         self._on_wake_word_detected = on_wake_word_detected
         self._on_vad_speech_end = on_vad_speech_end
         self._loop = asyncio.get_running_loop()
+
+        # Initialize unified audio processor for real-time processing
+        self._audio_processor = UnifiedAudioProcessor()
+
         self._detectors: Dict[int, Model] = {}
         self._user_audio_buffers: Dict[int, bytearray] = {}
         self._authority_buffer = bytearray()
         self._vad_raw_buffer = bytearray()
         self._vad_resampled_buffer = bytearray()
-        self._ww_resample_state: Dict[int, Optional[any]] = {}
         self._ww_resampled_buffers: Dict[int, bytearray] = {}
-        self._vad_resample_state = None
 
         # Thread-safe synchronization primitives for TOCTOU fix
         self._action_lock = action_lock
@@ -452,7 +460,9 @@ class ManualControlSink(AudioSink):
             Config.VAD_GRACE_PERIOD_MS // 20
         )  # 20ms per raw discord frame
         self._vad_frames_processed = 0
-        self._ww_chunk_size = 1280  # 80ms of 16kHz, 16-bit, mono audio
+        self._ww_chunk_size = (
+            Config.WAKE_WORD_CHUNK_SIZE
+        )  # 80ms of 16kHz, 16-bit, mono audio
         self._vad_analyzer: Optional[VADAnalyzer] = None
 
         # VAD silence injection system - coordinates between real audio and synthetic silence
@@ -463,7 +473,7 @@ class ManualControlSink(AudioSink):
             None  # Background silence injection task
         )
         self._silence_chunk_vad = (
-            b"\x00" * 3840
+            b"\x00" * Config.DISCORD_CHUNK_SIZE
         )  # 20ms of 48kHz stereo 16-bit PCM silence
         self._vad_lock = (
             asyncio.Lock()
@@ -508,7 +518,6 @@ class ManualControlSink(AudioSink):
                 self._detectors[user_id] = Model(**model_kwargs)
                 self._user_audio_buffers[user_id] = bytearray()
                 self._ww_resampled_buffers[user_id] = bytearray()
-                self._ww_resample_state[user_id] = None
                 self._ww_buffer_locks[user_id] = (
                     threading.Lock()
                 )  # Create per-user lock
@@ -528,11 +537,14 @@ class ManualControlSink(AudioSink):
             # Clean up all user data atomically
             self._detectors.pop(user_id, None)
             self._user_audio_buffers.pop(user_id, None)
-            self._ww_resample_state.pop(user_id, None)
             self._ww_resampled_buffers.pop(user_id, None)
             self._ww_buffer_locks.pop(
                 user_id, None
             )  # Safe to delete after data cleanup
+
+            # Reset unified processor state for this user
+            wake_word_state_key = f"wake_word_user_{user_id}"
+            self._audio_processor.reset_state(wake_word_state_key)
 
     def cleanup(self) -> None:
         logger.info("Cleaning up ManualControlSink.")
@@ -607,9 +619,11 @@ class ManualControlSink(AudioSink):
                         f"Cleared {buffer_size} bytes from user {user_id} resampled buffer"
                     )
 
-            # Reset all resample states
-            for user_id in list(self._ww_resample_state.keys()):
-                self._ww_resample_state[user_id] = None
+            # Reset all resample states using unified processor
+            for user_id in list(self._ww_resampled_buffers.keys()):
+                # Reset state in unified processor
+                wake_word_state_key = f"wake_word_user_{user_id}"
+                self._audio_processor.reset_state(wake_word_state_key)
                 cleanup_stats["states_reset"] += 1
 
         logger.info(f"Comprehensive wake word cleanup completed: {cleanup_stats}")
@@ -649,7 +663,6 @@ class ManualControlSink(AudioSink):
         # Clear VAD buffers for fresh start
         self._vad_raw_buffer.clear()
         self._vad_resampled_buffer.clear()
-        self._vad_resample_state = None
 
     def update_session_id(self) -> None:
         """
@@ -697,7 +710,6 @@ class ManualControlSink(AudioSink):
         # Clear VAD-specific state
         self._vad_raw_buffer.clear()
         self._vad_resampled_buffer.clear()
-        self._vad_resample_state = None
         # Destroy VAD analyzer to ensure fresh state for next session
         self._vad_analyzer = None
 
@@ -837,44 +849,67 @@ class ManualControlSink(AudioSink):
         """
         Generic helper method for resampling Discord audio to target format.
 
-        Converts 48kHz stereo PCM to target mono PCM with stateful resampling.
+        Now uses the unified audio processing framework for consistent resampling
+        across the codebase while maintaining backward compatibility.
 
         Args:
             raw_chunk: Raw PCM audio data from Discord (48kHz, 16-bit, stereo)
-            resample_state: Current audioop resampling state for smooth conversion
             target_sample_rate: Target sample rate in Hz (default: 16000)
 
         Returns:
-            Tuple of (resampled_audio_bytes, new_resample_state)
+            bytes: Resampled audio data
         """
-        mono_audio = audioop.tomono(raw_chunk, Config.SAMPLE_WIDTH, 1, 1)
-        resampled_audio, new_state = audioop.ratecv(
-            mono_audio,
-            Config.SAMPLE_WIDTH,
-            1,
-            Config.DISCORD_AUDIO_FRAME_RATE,
-            target_sample_rate,
-            resample_state,
+        # Map target sample rate to appropriate format
+        if target_sample_rate == Config.VAD_SAMPLE_RATE:
+            target_format = VAD_FORMAT
+            state_key = f"vad_session_{self._active_session_id}"
+        elif target_sample_rate == Config.WAKE_WORD_SAMPLE_RATE:
+            target_format = WAKE_WORD_FORMAT
+            state_key = f"wake_word_session_{self._active_session_id}"
+        else:
+            # Custom target rate
+            target_format = AudioFormat(target_sample_rate, 1, Config.SAMPLE_WIDTH)
+            state_key = f"custom_{target_sample_rate}_session_{self._active_session_id}"
+
+        # Use unified processor for consistent resampling
+        resampled_audio = self._audio_processor.convert_sync(
+            DISCORD_FORMAT,
+            target_format,
+            raw_chunk,
+            strategy=ProcessingStrategy.REALTIME,
+            state_key=state_key,
         )
-        return resampled_audio, new_state
+
+        return resampled_audio
 
     def _resample_and_convert(self, raw_chunk: bytes, user_id: int) -> bytes:
         """
         Convert Discord audio format to wake word model requirements.
 
+        Now uses the unified audio processing framework for consistent wake word
+        audio conversion across the codebase.
+
         Discord provides: 48kHz, 16-bit, stereo PCM
         Wake word models need: 16kHz, 16-bit, mono PCM
 
-        Uses audioop.ratecv() which maintains per-user conversion state
-        for smooth resampling across chunk boundaries.
+        Args:
+            raw_chunk: Raw PCM audio data from Discord
+            user_id: User ID for per-user state management
+
+        Returns:
+            bytes: Resampled mono PCM audio for wake word detection
         """
-        resampled_audio, state = self._resample_audio(
+        # Create per-user state key for wake word processing
+        state_key = f"wake_word_user_{user_id}"
+
+        # Use unified processor for consistent wake word audio conversion
+        return self._audio_processor.convert_sync(
+            DISCORD_FORMAT,
+            WAKE_WORD_FORMAT,
             raw_chunk,
-            self._ww_resample_state.get(user_id),
-            Config.WAKE_WORD_SAMPLE_RATE,
+            strategy=ProcessingStrategy.REALTIME,
+            state_key=state_key,
         )
-        self._ww_resample_state[user_id] = state
-        return resampled_audio
 
     async def _handle_vad_speech_end(self):
         """
@@ -917,7 +952,6 @@ class ManualControlSink(AudioSink):
         # Clear VAD-specific buffers
         self._vad_raw_buffer.clear()
         self._vad_resampled_buffer.clear()
-        self._vad_resample_state = None
         # Destroy VAD analyzer to ensure fresh state for next session
         self._vad_analyzer = None
 
@@ -972,14 +1006,16 @@ class ManualControlSink(AudioSink):
 
         # Buffer raw audio before resampling, similar to the wake word path
         self._vad_raw_buffer.extend(pcm_data)
-        min_vad_raw_bytes = 3840  # Process in 20ms chunks of raw 48kHz stereo
+        min_vad_raw_bytes = (
+            Config.DISCORD_CHUNK_SIZE
+        )  # Process in 20ms chunks of raw 48kHz stereo
 
         while len(self._vad_raw_buffer) >= min_vad_raw_bytes:
             raw_chunk = self._vad_raw_buffer[:min_vad_raw_bytes]
             del self._vad_raw_buffer[:min_vad_raw_bytes]
 
-            resampled_audio, self._vad_resample_state = self._resample_audio(
-                raw_chunk, self._vad_resample_state, Config.VAD_SAMPLE_RATE
+            resampled_audio = self._resample_audio(
+                raw_chunk, None, Config.VAD_SAMPLE_RATE
             )
             self._vad_resampled_buffer.extend(resampled_audio)
 
@@ -1096,7 +1132,7 @@ class ManualControlSink(AudioSink):
 
             # Process in chunks large enough for at least one resample operation
             # 7680 bytes of 48kHz stereo -> 1920 frames -> 640 frames @ 16kHz mono -> 1280 bytes
-            min_raw_bytes = 7680
+            min_raw_bytes = Config.VAD_PROCESSING_CHUNK
             processed_bytes = 0
             resampled_buffer = self._ww_resampled_buffers[user.id]
             while len(buffer) - processed_bytes >= min_raw_bytes:
@@ -1133,5 +1169,4 @@ class ManualControlSink(AudioSink):
                     )
                     self._user_audio_buffers[user.id].clear()
                     self._ww_resampled_buffers[user.id].clear()
-                    self._ww_resample_state[user.id] = None
                     return
