@@ -1,5 +1,4 @@
 import asyncio
-import io
 import os
 from dataclasses import dataclass, field
 from typing import Optional, Tuple
@@ -7,8 +6,8 @@ from typing import Optional, Tuple
 import discord
 from discord import FFmpegPCMAudio
 from discord.ext import voice_recv
-from pydub import AudioSegment
 
+from src.audio.processing import load_audio_file
 from src.config.config import Config
 from src.exceptions import AudioProcessingError
 from src.utils.logger import get_logger
@@ -99,17 +98,16 @@ class AudioPlaybackManager:
         cue_stream_id = f"cue_{cue_name}_{int(asyncio.get_running_loop().time())}"
         stream_started = False
         try:
-            # Decode the mp3 file into raw PCM audio using pydub
-            cue_audio = AudioSegment.from_mp3(str(cue_path))
-            cue_format = (cue_audio.frame_rate, cue_audio.channels)
+            # Load audio file using unified processing framework
+            pcm_data, audio_format = await load_audio_file(cue_path)
+            cue_format = (audio_format.sample_rate, audio_format.channels)
 
             # The manager loop will see this new stream and interrupt any current playback
             await self.start_new_audio_stream(cue_stream_id, cue_format)
             stream_started = True
 
-            buffer = io.BytesIO()
-            cue_audio.export(buffer, format="raw")
-            await self.add_audio_chunk(buffer.getvalue())
+            # Audio is already in PCM format from unified processor
+            await self.add_audio_chunk(pcm_data)
 
         except AudioProcessingError as e:
             logger.error(
@@ -188,6 +186,10 @@ class AudioPlaybackManager:
                     self.audio_chunk_queue.task_done()
         except asyncio.CancelledError:
             logger.debug(f"Feeder task for stream '{stream.stream_id}' cancelled.")
+        except OSError as e:
+            logger.error(
+                f"OS error in pipe feeder for stream '{stream.stream_id}': {e}"
+            )
         finally:
             if writer_fp:
                 try:
@@ -251,7 +253,9 @@ class AudioPlaybackManager:
                     try:
                         # Wait for actual task completion with timeout
                         await asyncio.wait_for(self._monitor_task, timeout=2.0)
-                        logger.debug(f"Manager loop for guild {self.guild.id}: Monitor task cleaned up successfully")
+                        logger.debug(
+                            f"Manager loop for guild {self.guild.id}: Monitor task cleaned up successfully"
+                        )
                     except asyncio.TimeoutError:
                         logger.warning(
                             f"Manager loop for guild {self.guild.id}: Monitor task cleanup timed out after 2s. "
@@ -259,7 +263,9 @@ class AudioPlaybackManager:
                         )
                     except asyncio.CancelledError:
                         # This is expected when the task is successfully cancelled
-                        logger.debug(f"Manager loop for guild {self.guild.id}: Monitor task cancelled successfully")
+                        logger.debug(
+                            f"Manager loop for guild {self.guild.id}: Monitor task cancelled successfully"
+                        )
 
                 voice_client = self.guild.voice_client
                 if (
@@ -289,7 +295,9 @@ class AudioPlaybackManager:
                 try:
                     # Ensure cleanup completes before exiting
                     await asyncio.wait_for(self._monitor_task, timeout=2.0)
-                    logger.debug(f"Manager loop for guild {self.guild.id}: Final monitor task cleanup successful")
+                    logger.debug(
+                        f"Manager loop for guild {self.guild.id}: Final monitor task cleanup successful"
+                    )
                 except asyncio.TimeoutError:
                     logger.error(
                         f"Manager loop for guild {self.guild.id}: Monitor task failed to cleanup within 2s timeout. "

@@ -9,8 +9,6 @@ This module provides the OpenAIEventHandlerAdapter class, responsible for:
 
 from __future__ import annotations
 
-import asyncio
-import base64
 from typing import Callable, Awaitable, Dict, Optional, Tuple
 
 # Using Any for OpenAI event attributes for now, will refine if specific types are confirmed
@@ -173,11 +171,14 @@ class OpenAIEventHandlerAdapter:
             )
 
         try:
-            loop = asyncio.get_running_loop()
-            decoded_audio = await loop.run_in_executor(
-                None, base64.b64decode, base64_audio_chunk
-            )
+            from src.audio.processing import decode_base64_to_pcm_async
+
+            decoded_audio = await decode_base64_to_pcm_async(base64_audio_chunk)
             await self.audio_playback_manager.add_audio_chunk(decoded_audio)
+        except (ValueError, TypeError) as e:
+            logger.error(
+                f"Invalid base64 audio data for stream '{self._active_response_stream_id}': {e}"
+            )
         except Exception as e:
             logger.error(
                 f"Error decoding or adding audio chunk for stream '{self._active_response_stream_id}': {e}",
