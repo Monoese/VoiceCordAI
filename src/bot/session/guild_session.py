@@ -8,7 +8,7 @@ state conflicts.
 """
 
 import asyncio
-from typing import Dict, Optional, Set
+from typing import TYPE_CHECKING, Dict, Optional, Set
 
 import discord
 import openai
@@ -16,7 +16,12 @@ from discord.ext import commands
 from google.genai import errors as gemini_errors
 
 from src.audio.playback import AudioPlaybackManager
-from src.audio.processor import process_recorded_audio
+from src.audio.processing import (
+    UnifiedAudioProcessor,
+    AudioFormat,
+    ProcessingStrategy,
+    DISCORD_FORMAT,
+)
 from src.audio.sinks import ManualControlSink, RealtimeMixingSink
 from src.bot.session.ai_service_coordinator import AIServiceCoordinator
 from src.bot.session.interaction_handler import InteractionHandler
@@ -25,6 +30,9 @@ from src.bot.session.voice_connection_manager import VoiceConnectionManager
 from src.bot.state import BotState, BotModeEnum, BotStateEnum, RecordingMethod
 from src.config.config import Config
 from src.utils.logger import get_logger
+
+if TYPE_CHECKING:
+    from src.audio.sinks import AudioSink
 
 logger = get_logger(__name__)
 
@@ -56,7 +64,10 @@ class GuildSession:
         self.bot = bot
         self._action_lock = asyncio.Lock()
         self._background_tasks: Set[asyncio.Task] = set()
-        self._audio_sink: Optional["AudioSink"] = None
+        self._audio_sink: Optional[AudioSink] = None
+
+        # Cached audio processor instance for efficient reuse
+        self._audio_processor = UnifiedAudioProcessor()
 
         self.bot_state = BotState()
         self.ui_manager = SessionUIManager(self.guild, self.bot_state)
@@ -324,11 +335,17 @@ class GuildSession:
                 return
             target_frame_rate, target_channels = target_format
 
-            # Convert the raw audio to the required format
-            processed_audio = await process_recorded_audio(
-                raw_audio_data=audio_data,
-                target_frame_rate=target_frame_rate,
-                target_channels=target_channels,
+            # Convert the raw audio to the required format using cached processor
+            target_format = AudioFormat(
+                sample_rate=target_frame_rate,
+                channels=target_channels,
+                sample_width=Config.SAMPLE_WIDTH,
+            )
+            processed_audio = await self._audio_processor.convert(
+                source_format=DISCORD_FORMAT,
+                target_format=target_format,
+                audio_data=audio_data,
+                strategy=ProcessingStrategy.QUALITY,
             )
 
             if not await self.ai_coordinator.send_audio_turn(processed_audio):
