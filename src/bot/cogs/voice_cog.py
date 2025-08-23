@@ -291,10 +291,8 @@ class VoiceCog(commands.Cog):
                 await ctx.send("The bot is not currently in a session in this server.")
                 return
 
-            await ctx.send("Session terminating...")
             try:
                 await session.cleanup()
-                await ctx.send("Session terminated successfully.")
             except StateTransitionError as e:
                 logger.critical(
                     f"Caught unrecoverable state error in guild {ctx.guild.id} during disconnect: {e}",
