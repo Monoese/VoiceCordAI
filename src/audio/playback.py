@@ -248,7 +248,18 @@ class AudioPlaybackManager:
 
                 if self._monitor_task and not self._monitor_task.done():
                     self._monitor_task.cancel()
-                    await asyncio.sleep(0.1)
+                    try:
+                        # Wait for actual task completion with timeout
+                        await asyncio.wait_for(self._monitor_task, timeout=2.0)
+                        logger.debug(f"Manager loop for guild {self.guild.id}: Monitor task cleaned up successfully")
+                    except asyncio.TimeoutError:
+                        logger.warning(
+                            f"Manager loop for guild {self.guild.id}: Monitor task cleanup timed out after 2s. "
+                            "This may indicate a stuck FFmpeg process or network issue."
+                        )
+                    except asyncio.CancelledError:
+                        # This is expected when the task is successfully cancelled
+                        logger.debug(f"Manager loop for guild {self.guild.id}: Monitor task cancelled successfully")
 
                 voice_client = self.guild.voice_client
                 if (
@@ -275,4 +286,16 @@ class AudioPlaybackManager:
         finally:
             if self._monitor_task and not self._monitor_task.done():
                 self._monitor_task.cancel()
+                try:
+                    # Ensure cleanup completes before exiting
+                    await asyncio.wait_for(self._monitor_task, timeout=2.0)
+                    logger.debug(f"Manager loop for guild {self.guild.id}: Final monitor task cleanup successful")
+                except asyncio.TimeoutError:
+                    logger.error(
+                        f"Manager loop for guild {self.guild.id}: Monitor task failed to cleanup within 2s timeout. "
+                        "Resources may leak. Consider increasing timeout or investigating stuck operations."
+                    )
+                except asyncio.CancelledError:
+                    # Expected behavior
+                    pass
             logger.info(f"Manager loop for guild {self.guild.id} exited.")
