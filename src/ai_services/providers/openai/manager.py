@@ -9,8 +9,6 @@ and event handling.
 
 from __future__ import annotations
 
-import asyncio
-import base64
 from typing import Optional, Dict, Any, Callable, Awaitable
 
 from openai import AsyncOpenAI
@@ -132,11 +130,9 @@ class OpenAIRealtimeManager(BaseRealtimeManager):
             logger.error("Cannot send audio chunk: Not connected.")
             return False
         try:
-            loop = asyncio.get_running_loop()
-            audio_b64_bytes = await loop.run_in_executor(
-                None, base64.b64encode, audio_data
-            )
-            audio_b64 = audio_b64_bytes.decode("utf-8")
+            from src.audio.processing import encode_pcm_to_base64_async
+
+            audio_b64 = await encode_pcm_to_base64_async(audio_data)
             await conn.input_audio_buffer.append(audio=audio_b64)
             logger.debug("Sent input_audio_buffer.append")
             return True
