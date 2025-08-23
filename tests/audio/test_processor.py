@@ -1,74 +1,77 @@
 import base64
-from unittest.mock import MagicMock, patch
 
 import pytest
 
-from src.audio.processor import encode_to_base64, process_recorded_audio
+from src.audio.processing import (
+    UnifiedAudioProcessor,
+    AudioFormat,
+    ProcessingStrategy,
+    DISCORD_FORMAT,
+    encode_pcm_to_base64,
+)
 from src.config.config import Config
-from src.exceptions import AudioProcessingError
 
 
-def test_encode_to_base64():
+def test_encode_pcm_to_base64():
     """Tests the static method for base64 encoding."""
     pcm_data = b"some test audio data"
     expected_base64 = base64.b64encode(pcm_data).decode("utf-8")
 
-    encoded_data = encode_to_base64(pcm_data)
+    encoded_data = encode_pcm_to_base64(pcm_data)
 
     assert encoded_data == expected_base64
 
 
 @pytest.mark.asyncio
-@patch("src.audio.processor.AudioSegment")
-async def test_process_recorded_audio_success(mock_audio_segment_cls: MagicMock):
+async def test_unified_audio_processor_success():
     """
-    Tests successful audio processing using the pydub-based method.
+    Tests successful audio processing using the unified audio processor.
     """
-    raw_audio_data = b"\x01\x02\x03\x04"
-    processed_audio_data = b"\x05\x06\x07\x08"
+    # Test data - valid PCM data
+    raw_audio_data = b"\x00\x01" * 1000  # 2000 bytes of valid PCM data
     target_frame_rate = 16000
     target_channels = 1
 
-    # Mock the chain of pydub calls
-    mock_segment_instance = MagicMock()
-    mock_audio_segment_cls.return_value = mock_segment_instance
-    mock_segment_instance.set_channels.return_value = mock_segment_instance
-    mock_segment_instance.set_frame_rate.return_value = mock_segment_instance
-
-    # Mock the export method to write to the buffer
-    def mock_export(buffer, format):
-        buffer.write(processed_audio_data)
-
-    mock_segment_instance.export.side_effect = mock_export
-
-    result = await process_recorded_audio(
-        raw_audio_data, target_frame_rate, target_channels
-    )
-
-    assert result == processed_audio_data
-    mock_audio_segment_cls.assert_called_once_with(
-        data=raw_audio_data,
+    # Create target format
+    target_format = AudioFormat(
+        sample_rate=target_frame_rate,
+        channels=target_channels,
         sample_width=Config.SAMPLE_WIDTH,
-        frame_rate=Config.DISCORD_AUDIO_FRAME_RATE,
-        channels=Config.DISCORD_AUDIO_CHANNELS,
     )
-    mock_segment_instance.set_channels.assert_called_once_with(target_channels)
-    mock_segment_instance.set_frame_rate.assert_called_once_with(target_frame_rate)
-    assert mock_segment_instance.export.call_args.kwargs["format"] == "raw"
+
+    # Use unified processor directly
+    processor = UnifiedAudioProcessor()
+    result = await processor.convert(
+        source_format=DISCORD_FORMAT,
+        target_format=target_format,
+        audio_data=raw_audio_data,
+        strategy=ProcessingStrategy.QUALITY,
+    )
+
+    # Assertions
+    assert isinstance(result, bytes)
+    assert len(result) > 0
 
 
 @pytest.mark.asyncio
-@patch("src.audio.processor.AudioSegment")
-async def test_process_recorded_audio_failure(mock_audio_segment_cls: MagicMock):
+async def test_unified_audio_processor_empty_data():
     """
-    Tests the failure path of audio processing when pydub fails.
+    Tests that the unified audio processor handles empty data gracefully.
     """
-    raw_audio_data = b"\x01\x02\x03\x04"
-    error_message = "pydub failed"
-    mock_audio_segment_cls.side_effect = Exception(error_message)
+    # Test with empty audio data
+    empty_audio_data = b""
+    target_format = AudioFormat(
+        sample_rate=16000, channels=1, sample_width=Config.SAMPLE_WIDTH
+    )
 
-    with pytest.raises(AudioProcessingError) as excinfo:
-        await process_recorded_audio(raw_audio_data, 16000, 1)
+    processor = UnifiedAudioProcessor()
 
-    assert "Audio processing failed" in str(excinfo.value)
-    assert error_message in str(excinfo.value.__cause__)
+    # Empty input should result in empty output
+    result = await processor.convert(
+        source_format=DISCORD_FORMAT,
+        target_format=target_format,
+        audio_data=empty_audio_data,
+        strategy=ProcessingStrategy.QUALITY,
+    )
+
+    assert result == b""

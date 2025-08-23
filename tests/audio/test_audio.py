@@ -12,7 +12,14 @@ from unittest.mock import MagicMock
 import discord
 
 from src.audio.playback import AudioPlaybackManager
-from src.audio.processor import encode_to_base64, process_recorded_audio
+from src.audio.processing import (
+    UnifiedAudioProcessor,
+    AudioFormat,
+    ProcessingStrategy,
+    DISCORD_FORMAT,
+    encode_pcm_to_base64,
+)
+from src.config.config import Config
 
 
 @pytest.fixture
@@ -33,12 +40,23 @@ async def test_audio_pipeline_integration(mock_guild: MagicMock):
     playback_manager = AudioPlaybackManager(mock_guild)
     raw_audio = b"\x01\x02\x03\x04" * 1000  # Simulate recorded audio
 
-    # Process the recorded audio
-    processed_audio = await process_recorded_audio(raw_audio, 24000, 1)
+    # Process the recorded audio using unified processor
+    target_format = AudioFormat(
+        sample_rate=24000,
+        channels=1,
+        sample_width=Config.SAMPLE_WIDTH,
+    )
+    processor = UnifiedAudioProcessor()
+    processed_audio = await processor.convert(
+        source_format=DISCORD_FORMAT,
+        target_format=target_format,
+        audio_data=raw_audio,
+        strategy=ProcessingStrategy.QUALITY,
+    )
     assert len(processed_audio) > 0
 
     # Encode for transmission
-    encoded_audio = encode_to_base64(processed_audio)
+    encoded_audio = encode_pcm_to_base64(processed_audio)
     assert isinstance(encoded_audio, str)
 
     # Setup playback stream
