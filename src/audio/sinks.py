@@ -843,9 +843,9 @@ class ManualControlSink(AudioSink):
     def _resample_audio(
         self,
         raw_chunk: bytes,
-        resample_state: Optional[any],
+        resample_state: Optional[Any],
         target_sample_rate: int = 16000,
-    ) -> tuple[bytes, Optional[any]]:
+    ) -> tuple[bytes, Optional[Any]]:
         """
         Generic helper method for resampling Discord audio to target format.
 
@@ -1042,12 +1042,24 @@ class ManualControlSink(AudioSink):
         # SESSION ID VALIDATION: Early exit if session has changed
         current_session_id = self._bot_state.current_session_id
         if current_session_id != self._active_session_id:
-            # Don't log every frame to avoid spam - use modulo for periodic logging
-            if hash(data.pcm) % 100 == 0:  # Log ~1% of frames
-                self._cleanup_metrics.record_session_id_mismatch(
-                    self._active_session_id, current_session_id
+            # Immediately update session ID to prevent race conditions
+            # This eliminates the window where valid frames might be discarded
+            old_session_id = self._active_session_id
+            self._active_session_id = current_session_id
+
+            # Log the session change (not every frame to avoid spam)
+            if (
+                hash(data.pcm) % Config.AUDIO_LOG_SAMPLING_RATE == 0
+            ):  # Log ~1% of frames
+                logger.info(
+                    f"Auto-updated ManualControlSink session ID: {old_session_id} -> {current_session_id}"
                 )
-            return
+                self._cleanup_metrics.record_session_id_mismatch(
+                    old_session_id, current_session_id
+                )
+
+            # Continue processing with updated session ID instead of returning
+            # This ensures valid frames aren't lost during session transitions
 
         # Capture state atomically for consistent logging
         current_state = self._bot_state.current_state

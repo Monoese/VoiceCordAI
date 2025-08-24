@@ -83,6 +83,11 @@ class Config:
     MAX_AUTHORITY_BUFFER_SIZE: int = 1024 * 1024  # 1MB limit for authority buffers
     MAX_STANDBY_BUFFER_SIZE: int = 512 * 1024  # 512KB limit for standby buffers
 
+    # Audio playback and processing constants
+    AUDIO_PLAYBACK_QUEUE_SIZE: int = 1000  # Max audio chunks in playback queue
+    AUDIO_LOG_SAMPLING_RATE: int = 100  # Log ~1% of frames (1 in 100)
+    FFMPEG_PROCESS_CLEANUP_TIMEOUT: float = 2.0  # Seconds to wait for FFmpeg cleanup
+
     # --- Wake Word & VAD Settings ---
     # openWakeWord settings
     WAKE_WORD_MODEL_PATH: Path = BASE_DIR / "assets/wakeword_models/alexa_v0.1.onnx"

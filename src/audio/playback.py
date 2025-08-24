@@ -38,7 +38,7 @@ class AudioPlaybackManager:
         """
         self.guild = guild
         self.audio_chunk_queue: asyncio.Queue[Tuple[str, Optional[bytes]]] = (
-            asyncio.Queue()
+            asyncio.Queue(maxsize=Config.AUDIO_PLAYBACK_QUEUE_SIZE)
         )
         self._playback_control_event = asyncio.Event()
         self._current_stream_id: Optional[str] = None
@@ -172,7 +172,19 @@ class AudioPlaybackManager:
         writer_fp = None
         loop = asyncio.get_running_loop()
         try:
-            writer_fp = os.fdopen(stream.pipe_write_fd, "wb")
+            try:
+                writer_fp = os.fdopen(stream.pipe_write_fd, "wb")
+            except OSError as e:
+                logger.error(
+                    f"Failed to open pipe writer for stream '{stream.stream_id}': {e}"
+                )
+                # Close the raw file descriptor to prevent leak
+                try:
+                    os.close(stream.pipe_write_fd)
+                except OSError:
+                    pass  # Already closed or invalid
+                return
+
             while True:
                 item_stream_id, item_data = await self.audio_chunk_queue.get()
                 try:
@@ -216,7 +228,7 @@ class AudioPlaybackManager:
 
     async def _monitor_playback(
         self, stream: _PlaybackStream, voice_client: voice_recv.VoiceRecvClient
-    ):
+    ) -> None:
         """A self-contained task to play one audio stream and clean up."""
         try:
             stream.feeder_task = asyncio.create_task(self._feed_audio_to_pipe(stream))
@@ -241,6 +253,39 @@ class AudioPlaybackManager:
                 f"Finished playback for stream '{stream.stream_id}' in guild {self.guild.id}."
             )
 
+    async def _force_terminate_ffmpeg_process(self, monitor_task: asyncio.Task) -> None:
+        """Force terminate FFmpeg process if monitor task is stuck."""
+        try:
+            # Try to extract the stream from the task's context if possible
+            # This is a best-effort approach since the task structure may vary
+            if hasattr(monitor_task, "_coro") and hasattr(
+                monitor_task._coro, "cr_frame"
+            ):
+                # Get local variables from the coroutine frame
+                frame_locals = (
+                    monitor_task._coro.cr_frame.f_locals
+                    if monitor_task._coro.cr_frame
+                    else {}
+                )
+                stream = frame_locals.get("stream")
+
+                if stream and hasattr(stream, "ffmpeg_audio_source"):
+                    # Try to access the underlying process
+                    ffmpeg_source = stream.ffmpeg_audio_source
+                    if hasattr(ffmpeg_source, "_process") and ffmpeg_source._process:
+                        try:
+                            ffmpeg_source._process.terminate()
+                            logger.warning(
+                                f"Force terminated FFmpeg process for guild {self.guild.id}"
+                            )
+                        except Exception as e:
+                            logger.error(
+                                f"Failed to force terminate FFmpeg process: {e}"
+                            )
+
+        except Exception as e:
+            logger.error(f"Error attempting to force terminate FFmpeg process: {e}")
+
     async def _manager_loop(self) -> None:
         """Main loop that manages starting and stopping playback monitors."""
         try:
@@ -252,15 +297,20 @@ class AudioPlaybackManager:
                     self._monitor_task.cancel()
                     try:
                         # Wait for actual task completion with timeout
-                        await asyncio.wait_for(self._monitor_task, timeout=2.0)
+                        await asyncio.wait_for(
+                            self._monitor_task,
+                            timeout=Config.FFMPEG_PROCESS_CLEANUP_TIMEOUT,
+                        )
                         logger.debug(
                             f"Manager loop for guild {self.guild.id}: Monitor task cleaned up successfully"
                         )
                     except asyncio.TimeoutError:
                         logger.warning(
-                            f"Manager loop for guild {self.guild.id}: Monitor task cleanup timed out after 2s. "
-                            "This may indicate a stuck FFmpeg process or network issue."
+                            f"Manager loop for guild {self.guild.id}: Monitor task cleanup timed out after {Config.FFMPEG_PROCESS_CLEANUP_TIMEOUT}s. "
+                            "This may indicate a stuck FFmpeg process or network issue. Attempting force termination."
                         )
+                        # Force terminate any stuck FFmpeg process
+                        await self._force_terminate_ffmpeg_process(self._monitor_task)
                     except asyncio.CancelledError:
                         # This is expected when the task is successfully cancelled
                         logger.debug(
@@ -294,15 +344,20 @@ class AudioPlaybackManager:
                 self._monitor_task.cancel()
                 try:
                     # Ensure cleanup completes before exiting
-                    await asyncio.wait_for(self._monitor_task, timeout=2.0)
+                    await asyncio.wait_for(
+                        self._monitor_task,
+                        timeout=Config.FFMPEG_PROCESS_CLEANUP_TIMEOUT,
+                    )
                     logger.debug(
                         f"Manager loop for guild {self.guild.id}: Final monitor task cleanup successful"
                     )
                 except asyncio.TimeoutError:
                     logger.error(
-                        f"Manager loop for guild {self.guild.id}: Monitor task failed to cleanup within 2s timeout. "
-                        "Resources may leak. Consider increasing timeout or investigating stuck operations."
+                        f"Manager loop for guild {self.guild.id}: Monitor task failed to cleanup within {Config.FFMPEG_PROCESS_CLEANUP_TIMEOUT}s timeout. "
+                        "Resources may leak. Attempting force termination."
                     )
+                    # Force terminate any stuck FFmpeg process in final cleanup
+                    await self._force_terminate_ffmpeg_process(self._monitor_task)
                 except asyncio.CancelledError:
                     # Expected behavior
                     pass
