@@ -9,6 +9,9 @@ on:
 jobs:
   test:
     runs-on: ubuntu-latest
+    env:
+      # Dummy values for config validation (tests use mocks, not real connections)
+      DISCORD_TOKEN: "test_token_for_ci"
     steps:
       - uses: actions/checkout@v4
 
