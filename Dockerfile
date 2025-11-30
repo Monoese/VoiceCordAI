@@ -1,7 +1,7 @@
 # VoiceCordAI Docker Image
 # Packages Python runtime and FFmpeg in container userspace
 
-FROM python:3.11-slim
+FROM python:3.13-slim
 
 # Install system dependencies
 # - FFmpeg: Required for audio processing and playback
