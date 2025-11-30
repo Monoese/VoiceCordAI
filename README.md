@@ -1,5 +1,7 @@
 # VoiceCordAI - Voice Chat Bot in Discord
 
+![CI](https://github.com/Monoese/VoiceCordAI/actions/workflows/ci.yml/badge.svg)
+
 A Discord bot that enables voice chat with AI from providers like OpenAI and Google Gemini, directly within a Discord voice channel.
 
 ## Features
@@ -9,6 +11,15 @@ A Discord bot that enables voice chat with AI from providers like OpenAI and Goo
 - Simple, reaction-based controls for interacting with the bot.
 - Privacy-focused with an opt-in consent model for voice recording.
 - Switch between AI providers on-the-fly with a command.
+
+## Technical Highlights
+
+- **Concurrent Session Management**: Per-guild isolation with dedicated `GuildSession` instances prevents state leaks between Discord servers
+- **Thread-Safe Audio Pipeline**: Bridges Discord's synchronous audio thread with asyncio using `run_coroutine_threadsafe` and atomic state capture to prevent race conditions
+- **Provider-Agnostic AI Interface**: Abstract base classes enable runtime switching between OpenAI Realtime and Gemini Live APIs
+- **Resilient Connections**: Exponential backoff reconnection (1s→30s cap) with graceful shutdown handling
+- **Dual Audio Processing**: Strategy pattern with stateful streaming (audioop) and batch quality (pydub) processors
+- **Containerized Deployment**: Docker support with Python runtime and FFmpeg bundled in the image
 
 ## Getting Started
 
@@ -134,6 +145,25 @@ After using `/connect`, the bot posts a status message. Use reactions on that me
 
 **Other Controls:**
 - **Add 🙏 Reaction:** Give or revoke consent for your voice to be recorded. You must grant consent to use the wake word feature.
+
+## Running with Docker
+
+If you prefer containerized deployment:
+
+1. **Build the image:**
+   ```bash
+   docker build -t voicecordai .
+   ```
+
+2. **Run the container:**
+   ```bash
+   docker run --env-file .env voicecordai
+   ```
+
+   Or with individual environment variables:
+   ```bash
+   docker run -e DISCORD_TOKEN=xxx -e OPENAI_API_KEY=xxx voicecordai
+   ```
 
 ## Troubleshooting
 
