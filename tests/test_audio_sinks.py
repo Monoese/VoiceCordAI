@@ -14,6 +14,7 @@ from discord.ext import voice_recv
 
 from src.audio.sinks import ManualControlSink, VADAnalyzer, CleanupMetrics
 from src.bot.state import BotState, BotStateEnum, RecordingMethod
+from src.exceptions import SessionConsistencyError
 
 
 class TestCleanupMetrics:
@@ -340,6 +341,26 @@ class TestManualControlSink:
 
         assert result == test_audio
         assert len(manual_control_sink._authority_buffer) == 0
+
+    def test_stop_and_get_audio_raises_on_session_mismatch(self, manual_control_sink):
+        """Test stop_and_get_audio raises SessionConsistencyError on session ID mismatch."""
+        test_audio = b"test_audio_data"
+        manual_control_sink._authority_buffer.extend(test_audio)
+
+        # Set up session ID mismatch: sink has ID 100, bot state has ID 200
+        manual_control_sink._active_session_id = 100
+        manual_control_sink._bot_state.current_session_id = 200
+
+        # Should raise SessionConsistencyError
+        with pytest.raises(SessionConsistencyError) as exc_info:
+            manual_control_sink.stop_and_get_audio()
+
+        # Verify error message contains session IDs
+        assert "100" in str(exc_info.value)
+        assert "200" in str(exc_info.value)
+
+        # Verify audio buffer was NOT cleared (exception raised before cleanup)
+        assert len(manual_control_sink._authority_buffer) == len(test_audio)
 
     def test_write_with_disallowed_user(self, manual_control_sink):
         """Test write method ignores disallowed users."""
