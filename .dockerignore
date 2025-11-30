@@ -1,0 +1,43 @@
+# Git
+.git
+.gitignore
+
+# Python
+__pycache__
+*.py[cod]
+*$py.class
+*.so
+.Python
+.venv
+venv
+ENV
+
+# IDE
+.idea
+.vscode
+*.swp
+*.swo
+
+# Environment and secrets (must be provided at runtime)
+.env
+.env.*
+*.pem
+*.key
+
+# Testing and development
+.pytest_cache
+.coverage
+htmlcov
+tests
+
+# Documentation
+*.md
+docs
+
+# Logs
+*.log
+logs
+
+# OS files
+.DS_Store
+Thumbs.db
