@@ -30,6 +30,7 @@ from src.audio.processing import (
 )
 from src.bot.state import BotState, BotStateEnum, RecordingMethod
 from src.config.config import Config
+from src.exceptions import SessionConsistencyError
 from src.utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -687,17 +688,16 @@ class ManualControlSink(AudioSink):
         Returns:
             bytes: The captured audio data in Discord's native PCM format
         """
-        # SESSION ID VALIDATION: Prevent cross-session contamination
+        # SESSION ID VALIDATION: Fail-fast on cross-session contamination
         current_session_id = self._bot_state.current_session_id
         if current_session_id != self._active_session_id:
             self._cleanup_metrics.record_session_id_mismatch(
                 self._active_session_id, current_session_id
             )
-            logger.warning(
-                f"Session ID mismatch in stop_and_get_audio: sink={self._active_session_id}, state={current_session_id}. "
-                f"Returning empty audio to prevent contamination."
+            raise SessionConsistencyError(
+                f"Session ID mismatch in stop_and_get_audio: "
+                f"sink={self._active_session_id}, state={current_session_id}"
             )
-            return b""
 
         # Capture authority user ID for logging purposes
         captured_authority_id = self._bot_state.authority_user_id
@@ -921,17 +921,20 @@ class ManualControlSink(AudioSink):
         SIMPLIFIED CLEANUP: Uses comprehensive cleanup instead of individual
         user cleanup for better robustness and maintainability.
         """
-        # SESSION ID VALIDATION: Prevent cross-session contamination
+        # SESSION ID VALIDATION: Fail-fast on cross-session contamination
+        # Note: This runs as an asyncio task, so we catch the exception here
+        # to prevent unhandled task exceptions while still logging the issue.
         current_session_id = self._bot_state.current_session_id
         if current_session_id != self._active_session_id:
             self._cleanup_metrics.record_session_id_mismatch(
                 self._active_session_id, current_session_id
             )
             logger.warning(
-                f"Session ID mismatch in VAD speech end: sink={self._active_session_id}, state={current_session_id}. "
-                f"Skipping callback to prevent contamination."
+                f"Session consistency error in VAD speech end: "
+                f"sink={self._active_session_id}, state={current_session_id}. "
+                f"Recording interrupted - audio will not be processed."
             )
-            return
+            return  # Early return - don't process stale audio
 
         # ATOMIC CAPTURE: Prevent race condition by capturing state for logging
         authority_user_id_at_speech_end = self._bot_state.authority_user_id

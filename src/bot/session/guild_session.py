@@ -29,6 +29,7 @@ from src.bot.session.session_ui_manager import SessionUIManager
 from src.bot.session.voice_connection_manager import VoiceConnectionManager
 from src.bot.state import BotState, BotModeEnum, BotStateEnum, RecordingMethod
 from src.config.config import Config
+from src.exceptions import SessionConsistencyError
 from src.utils.logger import get_logger
 
 if TYPE_CHECKING:
@@ -257,8 +258,13 @@ class GuildSession:
             ):
                 if self._audio_sink:
                     sink: "ManualControlSink" = self._audio_sink  # type: ignore
-                    audio_data = sink.stop_and_get_audio()
-                    self._handle_finished_recording(audio_data)
+                    try:
+                        audio_data = sink.stop_and_get_audio()
+                        self._handle_finished_recording(audio_data)
+                    except SessionConsistencyError as e:
+                        logger.warning(
+                            f"Recording interrupted due to session inconsistency: {e}"
+                        )
                 await self.bot_state.stop_recording()
 
     # --- New Callback Methods (passed to ManualControlSink) ---

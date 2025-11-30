@@ -82,6 +82,12 @@ class SessionError(DiscordBotError):
     pass
 
 
+class SessionConsistencyError(SessionError):
+    """Raised when session state becomes inconsistent (e.g., ID mismatch during recording)."""
+
+    pass
+
+
 class ValidationError(VoiceCordAIError):
     """Raised when input validation fails."""
 
