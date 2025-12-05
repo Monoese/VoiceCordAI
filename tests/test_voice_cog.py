@@ -12,7 +12,6 @@ import discord
 from discord.ext import commands
 
 from src.bot.cogs.voice_cog import VoiceCog
-from src.bot.state import BotModeEnum
 from src.exceptions import SessionError, StateTransitionError
 
 
@@ -164,20 +163,12 @@ class TestVoiceCogCommands:
         return ctx
 
     @pytest.mark.asyncio
-    async def test_connect_manual_command_success(self, voice_cog, mock_ctx):
-        """Test successful manual connect command."""
+    async def test_connect_command_success(self, voice_cog, mock_ctx):
+        """Test successful connect command."""
         with patch.object(voice_cog, "_handle_connect_command") as mock_handle:
             # Call the actual callback method, not the command wrapper
-            await voice_cog.connect_manual_command.callback(voice_cog, mock_ctx)
-            mock_handle.assert_called_once_with(mock_ctx, BotModeEnum.ManualControl)
-
-    @pytest.mark.asyncio
-    async def test_connect_realtime_command_success(self, voice_cog, mock_ctx):
-        """Test successful realtime connect command."""
-        with patch.object(voice_cog, "_handle_connect_command") as mock_handle:
-            # Call the actual callback method, not the command wrapper
-            await voice_cog.connect_realtime_command.callback(voice_cog, mock_ctx)
-            mock_handle.assert_called_once_with(mock_ctx, BotModeEnum.RealtimeTalk)
+            await voice_cog.connect_command.callback(voice_cog, mock_ctx)
+            mock_handle.assert_called_once_with(mock_ctx)
 
     @pytest.mark.asyncio
     async def test_handle_connect_command_already_connected(self, voice_cog, mock_ctx):
@@ -186,7 +177,7 @@ class TestVoiceCogCommands:
         mock_session = MagicMock()
         voice_cog._sessions[789] = mock_session
 
-        await voice_cog._handle_connect_command(mock_ctx, BotModeEnum.ManualControl)
+        await voice_cog._handle_connect_command(mock_ctx)
 
         mock_ctx.send.assert_called_once_with(
             "I'm already in a session in this server. Use `/disconnect` to end it first."
@@ -202,11 +193,9 @@ class TestVoiceCogCommands:
         mock_session.initialize_session.return_value = True
         mock_guild_session_class.return_value = mock_session
 
-        await voice_cog._handle_connect_command(mock_ctx, BotModeEnum.ManualControl)
+        await voice_cog._handle_connect_command(mock_ctx)
 
-        mock_session.initialize_session.assert_called_once_with(
-            mock_ctx, BotModeEnum.ManualControl
-        )
+        mock_session.initialize_session.assert_called_once_with(mock_ctx)
         assert voice_cog._sessions[789] == mock_session
 
     @pytest.mark.asyncio
@@ -219,7 +208,7 @@ class TestVoiceCogCommands:
         mock_session.initialize_session.return_value = False
         mock_guild_session_class.return_value = mock_session
 
-        await voice_cog._handle_connect_command(mock_ctx, BotModeEnum.ManualControl)
+        await voice_cog._handle_connect_command(mock_ctx)
 
         # Session should be removed from sessions dict
         assert 789 not in voice_cog._sessions
@@ -234,7 +223,7 @@ class TestVoiceCogCommands:
         mock_session.initialize_session.side_effect = StateTransitionError("Test error")
         mock_guild_session_class.return_value = mock_session
 
-        await voice_cog._handle_connect_command(mock_ctx, BotModeEnum.ManualControl)
+        await voice_cog._handle_connect_command(mock_ctx)
 
         mock_ctx.send.assert_called_once_with(
             "An unexpected internal error occurred. The session will now terminate."
@@ -560,12 +549,8 @@ class TestVoiceCogConcurrency:
     async def test_concurrent_connect_commands(self, voice_cog, mock_ctx):
         """Test that concurrent connect commands are properly serialized."""
         # Start both tasks directly (they will use the lock properly)
-        task1 = asyncio.create_task(
-            voice_cog._handle_connect_command(mock_ctx, BotModeEnum.ManualControl)
-        )
-        task2 = asyncio.create_task(
-            voice_cog._handle_connect_command(mock_ctx, BotModeEnum.ManualControl)
-        )
+        task1 = asyncio.create_task(voice_cog._handle_connect_command(mock_ctx))
+        task2 = asyncio.create_task(voice_cog._handle_connect_command(mock_ctx))
 
         # Wait for both to complete
         await asyncio.gather(task1, task2)

@@ -13,7 +13,7 @@ import discord
 from discord.ext import commands
 
 from src.bot.session.guild_session import GuildSession
-from src.bot.state import BotModeEnum, BotStateEnum, RecordingMethod
+from src.bot.state import BotStateEnum, RecordingMethod
 
 
 class TestGuildSessionInitialization:
@@ -385,81 +385,6 @@ class TestGuildSessionUserInteractions:
         mock_audio_sink.remove_user.assert_called_once_with(user.id)
         session.ui_manager.schedule_update.assert_called_once()
 
-    @pytest.mark.asyncio
-    async def test_handle_mode_switch_reaction_valid_user(
-        self, guild_session_with_mocks
-    ):
-        """Test mode switch reaction with valid user."""
-        session = guild_session_with_mocks
-
-        # Mock guild member with voice channel
-        mock_member = MagicMock(spec=discord.Member)
-        mock_member.voice = MagicMock()
-        mock_member.voice.channel = MagicMock()
-        session.guild.get_member.return_value = mock_member
-
-        user = MagicMock(spec=discord.User)
-        user.id = 789
-
-        # User has given consent - get_consented_user_ids is a sync method
-        session.bot_state.get_consented_user_ids = MagicMock(return_value={789})
-
-        # Mock switch_mode
-        session.switch_mode = AsyncMock()
-
-        # Use actual config emoji instead of mocking
-        await session.handle_mode_switch_reaction(user, "🙋")
-
-        session.switch_mode.assert_called_once_with(BotModeEnum.ManualControl)
-
-    @pytest.mark.asyncio
-    async def test_handle_mode_switch_reaction_no_voice_channel(
-        self, guild_session_with_mocks
-    ):
-        """Test mode switch reaction with user not in voice channel."""
-        session = guild_session_with_mocks
-
-        # Mock guild member without voice channel
-        mock_member = MagicMock(spec=discord.Member)
-        mock_member.voice = None
-        session.guild.get_member.return_value = mock_member
-
-        user = MagicMock(spec=discord.User)
-        user.id = 789
-
-        session.switch_mode = AsyncMock()
-
-        await session.handle_mode_switch_reaction(user, "✋")
-
-        # Should not call switch_mode
-        session.switch_mode.assert_not_called()
-
-    @pytest.mark.asyncio
-    async def test_handle_mode_switch_reaction_no_consent(
-        self, guild_session_with_mocks
-    ):
-        """Test mode switch reaction with user who hasn't given consent."""
-        session = guild_session_with_mocks
-
-        # Mock guild member with voice channel
-        mock_member = MagicMock(spec=discord.Member)
-        mock_member.voice = MagicMock()
-        mock_member.voice.channel = MagicMock()
-        session.guild.get_member.return_value = mock_member
-
-        user = MagicMock(spec=discord.User)
-        user.id = 789
-
-        # User has not given consent - get_consented_user_ids is a sync method
-        session.bot_state.get_consented_user_ids = MagicMock(return_value=set())
-
-        session.switch_mode = AsyncMock()
-
-        await session.handle_mode_switch_reaction(user, "✋")
-
-        # Should not call switch_mode
-        session.switch_mode.assert_not_called()
-
 
 class TestGuildSessionPushToTalkInteractions:
     """Test push-to-talk interaction handling."""
@@ -488,53 +413,6 @@ class TestGuildSessionPushToTalkInteractions:
             session.ai_coordinator = AsyncMock()
             return session
 
-    @pytest.mark.skip(
-        reason="Integration test - needs behavioral rewrite (tests implementation details)"
-    )
-    @pytest.mark.asyncio
-    async def test_handle_pushtotalk_reaction_start_recording(
-        self, guild_session_with_mocks
-    ):
-        """Test push-to-talk reaction to start recording."""
-        session = guild_session_with_mocks
-        user = MagicMock(spec=discord.User)
-
-        # Set up conditions for starting recording
-        session.bot_state.mode = BotModeEnum.ManualControl
-        session.bot_state.current_state = BotStateEnum.STANDBY
-
-        # Mock audio sink
-        mock_audio_sink = MagicMock()
-        session._audio_sink = mock_audio_sink
-
-        # Mock interrupt method
-        session._interrupt_ongoing_playback = AsyncMock()
-
-        await session.handle_pushtotalk_reaction(user, added=True)
-
-        session._interrupt_ongoing_playback.assert_called_once()
-        mock_audio_sink.enable_vad.assert_called_once_with(False)
-        session.bot_state.start_recording.assert_called_once_with(
-            user, RecordingMethod.PushToTalk
-        )
-        mock_audio_sink.update_session_id.assert_called_once()
-
-    @pytest.mark.asyncio
-    async def test_handle_pushtotalk_reaction_wrong_mode(
-        self, guild_session_with_mocks
-    ):
-        """Test push-to-talk reaction in wrong mode."""
-        session = guild_session_with_mocks
-        user = MagicMock(spec=discord.User)
-
-        # Wrong mode
-        session.bot_state.mode = BotModeEnum.RealtimeTalk
-
-        await session.handle_pushtotalk_reaction(user, added=True)
-
-        # Should not start recording
-        session.bot_state.start_recording.assert_not_called()
-
     @pytest.mark.asyncio
     async def test_handle_pushtotalk_reaction_stop_recording(
         self, guild_session_with_mocks
@@ -544,7 +422,6 @@ class TestGuildSessionPushToTalkInteractions:
         user = MagicMock(spec=discord.User)
 
         # Set up conditions for stopping recording
-        session.bot_state.mode = BotModeEnum.ManualControl
         session.bot_state.current_state = BotStateEnum.RECORDING
         session.bot_state.recording_method = RecordingMethod.PushToTalk
         session.bot_state.is_authorized.return_value = True
@@ -613,63 +490,13 @@ class TestGuildSessionWakeWordInteractions:
             session.audio_playback_manager = AsyncMock()
             return session
 
-    @pytest.mark.skip(
-        reason="Integration test - needs behavioral rewrite (tests implementation details)"
-    )
-    @pytest.mark.asyncio
-    async def test_on_wake_word_detected_valid_conditions(
-        self, guild_session_with_mocks
-    ):
-        """Test wake word detection with valid conditions."""
-        session = guild_session_with_mocks
-        user = MagicMock(spec=discord.User)
-
-        # Set up valid conditions
-        session.bot_state.mode = BotModeEnum.ManualControl
-        session.bot_state.current_state = BotStateEnum.STANDBY
-
-        # Mock audio sink
-        mock_audio_sink = MagicMock()
-        session._audio_sink = mock_audio_sink
-
-        # Mock interrupt method
-        session._interrupt_ongoing_playback = AsyncMock()
-
-        await session.on_wake_word_detected(user)
-
-        session._interrupt_ongoing_playback.assert_called_once()
-        mock_audio_sink.enable_vad.assert_called_once_with(True)
-        session.bot_state.start_recording.assert_called_once_with(
-            user, RecordingMethod.WakeWord
-        )
-        mock_audio_sink.update_session_id.assert_called_once()
-        session.audio_playback_manager.play_cue.assert_called_once_with(
-            "start_recording"
-        )
-
-    @pytest.mark.asyncio
-    async def test_on_wake_word_detected_wrong_mode(self, guild_session_with_mocks):
-        """Test wake word detection in wrong mode."""
-        session = guild_session_with_mocks
-        user = MagicMock(spec=discord.User)
-
-        # Wrong mode
-        session.bot_state.mode = BotModeEnum.RealtimeTalk
-        session.bot_state.current_state = BotStateEnum.STANDBY
-
-        await session.on_wake_word_detected(user)
-
-        # Should not start recording
-        session.bot_state.start_recording.assert_not_called()
-
     @pytest.mark.asyncio
     async def test_on_wake_word_detected_wrong_state(self, guild_session_with_mocks):
         """Test wake word detection in wrong state."""
         session = guild_session_with_mocks
         user = MagicMock(spec=discord.User)
 
-        # Correct mode but wrong state
-        session.bot_state.mode = BotModeEnum.ManualControl
+        # Wrong state - already recording
         session.bot_state.current_state = BotStateEnum.RECORDING
 
         await session.on_wake_word_detected(user)
@@ -740,62 +567,6 @@ class TestGuildSessionSessionManagement:
             session.ui_manager = AsyncMock()
             return session
 
-    @pytest.mark.skip(
-        reason="Integration test - needs behavioral rewrite (tests implementation details)"
-    )
-    @pytest.mark.asyncio
-    async def test_initialize_session_success(self, guild_session_with_mocks):
-        """Test successful session initialization."""
-        session = guild_session_with_mocks
-
-        mock_ctx = AsyncMock(spec=commands.Context)
-        mock_ctx.author = MagicMock(spec=discord.User)
-        mock_ctx.author.voice = MagicMock()
-        mock_ctx.author.voice.channel = MagicMock()
-
-        # Mock methods
-        session._initialize_sink = AsyncMock()
-        session.start_background_tasks = AsyncMock()
-        session.voice_connection.connect = AsyncMock(return_value=True)
-        session.ai_coordinator.initialize = AsyncMock()
-
-        result = await session.initialize_session(mock_ctx, BotModeEnum.ManualControl)
-
-        assert result is True
-        session.bot_state.initialize.assert_called_once()
-        session._initialize_sink.assert_called_once()
-        session.start_background_tasks.assert_called_once()
-        session.voice_connection.connect.assert_called_once()
-        session.ai_coordinator.initialize.assert_called_once()
-
-    @pytest.mark.skip(
-        reason="Integration test - needs behavioral rewrite (tests implementation details)"
-    )
-    @pytest.mark.asyncio
-    async def test_initialize_session_voice_connect_fails(
-        self, guild_session_with_mocks
-    ):
-        """Test session initialization when voice connection fails."""
-        session = guild_session_with_mocks
-
-        mock_ctx = AsyncMock(spec=commands.Context)
-        mock_ctx.author = MagicMock(spec=discord.User)
-        mock_ctx.author.voice = MagicMock()
-        mock_ctx.author.voice.channel = MagicMock()
-
-        # Mock methods
-        session._initialize_sink = AsyncMock()
-        session.start_background_tasks = AsyncMock()
-        session.voice_connection.connect = AsyncMock(
-            return_value=False
-        )  # Connection fails
-
-        result = await session.initialize_session(mock_ctx, BotModeEnum.ManualControl)
-
-        assert result is False
-        # AI coordinator should not be initialized if voice connection fails
-        session.ai_coordinator.initialize.assert_not_called()
-
     @pytest.mark.asyncio
     async def test_set_provider_success(self, guild_session_with_mocks):
         """Test successful AI provider change."""
@@ -830,41 +601,6 @@ class TestGuildSessionSessionManagement:
         mock_ctx.send.assert_called_once_with(
             "Invalid provider name 'invalid_provider'. Valid options are: openai, gemini."
         )
-
-    @pytest.mark.skip(
-        reason="Integration test - needs behavioral rewrite (tests implementation details)"
-    )
-    @pytest.mark.asyncio
-    async def test_switch_mode_manual_to_realtime(self, guild_session_with_mocks):
-        """Test switching from manual to realtime mode."""
-        session = guild_session_with_mocks
-
-        # Current mode is manual
-        session.bot_state.mode = BotModeEnum.ManualControl
-
-        # Mock methods
-        session._initialize_sink = AsyncMock()
-
-        await session.switch_mode(BotModeEnum.RealtimeTalk)
-
-        session.bot_state.set_mode.assert_called_once_with(BotModeEnum.RealtimeTalk)
-        session._initialize_sink.assert_called_once()
-        session.ui_manager.schedule_update.assert_called_once()
-
-    @pytest.mark.asyncio
-    async def test_switch_mode_same_mode(self, guild_session_with_mocks):
-        """Test switching to the same mode (no-op)."""
-        session = guild_session_with_mocks
-
-        # Current mode is already manual
-        session.bot_state.mode = BotModeEnum.ManualControl
-
-        await session.switch_mode(BotModeEnum.ManualControl)
-
-        # Should not call set_mode or initialize_sink
-        session.bot_state.set_mode.assert_not_called()
-        session._initialize_sink = AsyncMock()
-        session._initialize_sink.assert_not_called()
 
 
 class TestGuildSessionConcurrency:
@@ -921,7 +657,6 @@ class TestGuildSessionConcurrency:
         session = guild_session_with_mocks
 
         user = MagicMock(spec=discord.User)
-        session.bot_state.mode = BotModeEnum.ManualControl
         session.bot_state.current_state = BotStateEnum.STANDBY
 
         # Mock interrupt method
@@ -976,21 +711,6 @@ class TestGuildSessionErrorHandling:
 
         # Should have created a background task
         assert len(session._background_tasks) == 1
-
-    @pytest.mark.skip(
-        reason="Integration test - needs behavioral rewrite (tests implementation details)"
-    )
-    @pytest.mark.asyncio
-    async def test_safe_enter_error_state_with_matching_session_id(
-        self, guild_session_with_mocks
-    ):
-        """Test safe enter error state with matching session ID."""
-        session = guild_session_with_mocks
-        session.bot_state.session_id = 123
-
-        await session._safe_enter_error_state(123)
-
-        session.bot_state.enter_connection_error_state.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_safe_enter_error_state_with_mismatched_session_id(

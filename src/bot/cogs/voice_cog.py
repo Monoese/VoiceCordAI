@@ -15,7 +15,6 @@ import discord
 from discord.ext import commands
 
 from src.bot.session.guild_session import GuildSession
-from src.bot.state import BotModeEnum
 from src.exceptions import SessionError, StateTransitionError
 from src.utils.logger import get_logger
 
@@ -81,15 +80,12 @@ class VoiceCog(commands.Cog):
         self._sessions.clear()
         logger.info("All active sessions cleaned up.")
 
-    async def _handle_connect_command(
-        self, ctx: commands.Context, mode: BotModeEnum
-    ) -> None:
+    async def _handle_connect_command(self, ctx: commands.Context) -> None:
         """
-        Shared logic for connecting the bot in different modes.
+        Handles the logic for connecting the bot to a voice channel.
 
         Args:
             ctx: The command context.
-            mode: The bot mode to connect in.
         """
         async with self._session_locks[ctx.guild.id]:
             if ctx.guild.id in self._sessions:
@@ -100,22 +96,16 @@ class VoiceCog(commands.Cog):
 
             session = self._get_or_create_session(ctx.guild)
             try:
-                success = await session.initialize_session(ctx, mode)
+                success = await session.initialize_session(ctx)
                 if not success:
-                    mode_name = (
-                        "Manual" if mode == BotModeEnum.ManualControl else "Realtime"
-                    )
                     logger.warning(
-                        f"{mode_name} connection process failed for guild {ctx.guild.id}. Cleaning up session."
+                        f"Connection process failed for guild {ctx.guild.id}. Cleaning up session."
                     )
                     if ctx.guild.id in self._sessions:
                         del self._sessions[ctx.guild.id]
             except StateTransitionError as e:
-                mode_name = (
-                    "manual" if mode == BotModeEnum.ManualControl else "realtime"
-                )
                 logger.critical(
-                    f"Caught unrecoverable state error in guild {ctx.guild.id} during {mode_name} connect: {e}",
+                    f"Caught unrecoverable state error in guild {ctx.guild.id} during connect: {e}",
                     exc_info=True,
                 )
                 await ctx.send(
@@ -208,32 +198,19 @@ class VoiceCog(commands.Cog):
                 if reaction.message.guild.id in self._sessions:
                     del self._sessions[reaction.message.guild.id]
 
-    @commands.command(name="connect", aliases=["manual_connect"])
+    @commands.command(name="connect")
     @commands.guild_only()
-    async def connect_manual_command(self, ctx: commands.Context) -> None:
+    async def connect_command(self, ctx: commands.Context) -> None:
         """
-        Connects the bot in ManualControl mode.
+        Connects the bot to the user's voice channel.
 
-        This command is also aliased as `manual_connect`. It will fail if a
-        session is already active in the guild.
+        The bot will join the voice channel and start listening for voice input.
+        Users can interact via push-to-talk or wake word detection.
 
         Args:
             ctx: The command context.
         """
-        await self._handle_connect_command(ctx, BotModeEnum.ManualControl)
-
-    @commands.command(name="realtime_connect")
-    @commands.guild_only()
-    async def connect_realtime_command(self, ctx: commands.Context) -> None:
-        """
-        Connects the bot in RealtimeTalk mode.
-
-        This command will fail if a session is already active in the guild.
-
-        Args:
-            ctx: The command context.
-        """
-        await self._handle_connect_command(ctx, BotModeEnum.RealtimeTalk)
+        await self._handle_connect_command(ctx)
 
     @commands.command(name="set")
     @commands.guild_only()

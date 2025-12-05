@@ -1,18 +1,17 @@
 """
-Audio Sink Implementations for different operational modes.
+Audio Sink Implementations for voice audio processing.
 
-This module provides the concrete AudioSink classes for the bot's different
-operational modes, such as ManualControl and RealtimeTalk. Each sink is
-responsible for processing raw audio from users according to its mode's logic.
+This module provides the ManualControlSink class for processing audio from
+Discord voice channels. The sink handles wake word detection and voice
+activity detection for push-to-talk and wake-word triggered interactions.
 """
 
 import asyncio
 import threading
 import time
 from abc import ABC, abstractmethod
-from typing import Any, Awaitable, Callable, Dict, List, Optional, Set
+from typing import Any, Awaitable, Callable, Dict, Optional, Set
 
-import audioop
 import discord
 import numpy as np
 import openwakeword
@@ -228,145 +227,17 @@ class VADAnalyzer:
         self._triggered = False
 
 
-class RealtimeMixingSink(AudioSink):
-    """
-    An audio sink for the 'RealtimeTalk' mode - continuous multi-user conversation.
-
-    OVERVIEW:
-    This sink creates a real-time mixed audio stream from multiple consented users,
-    suitable for streaming to AI services that support multi-party conversations.
-
-    AUDIO PROCESSING PIPELINE:
-    1. Raw PCM audio arrives from Discord (48kHz, 16-bit, stereo, 20ms chunks)
-    2. Audio is buffered per-user in _user_buffers
-    3. Mixer task runs every 20ms, synchronized with Discord's audio timing
-    4. For each user: extract 20ms chunk OR pad with silence if no audio available
-    5. Mix all chunks into single audio stream using audioop.add()
-    6. Place mixed audio on output_queue for consumption by GuildSession
-
-    THREADING MODEL:
-    - write() method: Called from Discord's audio thread, thread-safe buffer updates
-    - _mixer_loop(): Async task on main event loop, uses run_in_executor for CPU-intensive mixing
-    - This design prevents blocking the event loop during audio mixing operations
-
-    BUFFER MANAGEMENT:
-    - Each user has independent audio buffer (bytearray for efficient append/slice)
-    - Silence padding ensures continuous streams even when users aren't speaking
-    - Dynamic user management allows real-time consent changes during conversation
-    """
-
-    def __init__(self, bot_state: BotState, initial_consented_users: Set[int]):
-        super().__init__()
-        self._bot_state = bot_state
-        self.output_queue: asyncio.Queue[bytes] = asyncio.Queue()
-
-        self._consented_users: Set[int] = set()
-        self._user_buffers: Dict[int, bytearray] = {}
-
-        # Audio timing and format constants
-        # 20ms of 48kHz, 16-bit, stereo audio
-        self._chunk_size = Config.DISCORD_CHUNK_SIZE
-        self._silence_chunk = (
-            b"\x00" * self._chunk_size
-        )  # Pre-computed silence for padding
-
-        self._mixer_task: Optional[asyncio.Task] = None
-        self._loop = asyncio.get_running_loop()
-
-        # Initialize with users who have already consented
-        for user_id in initial_consented_users:
-            self.add_user(user_id)
-
-        self.start()
-
-    def add_user(self, user_id: int) -> None:
-        if user_id in self._consented_users:
-            return
-        logger.info(f"Adding user {user_id} to RealtimeMixingSink.")
-        self._consented_users.add(user_id)
-        self._user_buffers[user_id] = bytearray()
-
-    def remove_user(self, user_id: int) -> None:
-        if user_id not in self._consented_users:
-            return
-        logger.info(f"Removing user {user_id} from RealtimeMixingSink.")
-        self._consented_users.discard(user_id)
-        self._user_buffers.pop(user_id, None)
-
-    def cleanup(self) -> None:
-        logger.info("Cleaning up RealtimeMixingSink.")
-        if self._mixer_task and not self._mixer_task.done():
-            self._mixer_task.cancel()
-        self._consented_users.clear()
-        self._user_buffers.clear()
-
-    def wants_opus(self) -> bool:
-        return False
-
-    def write(self, user: discord.User, data: voice_recv.VoiceData) -> None:
-        if user and user.id in self._consented_users:
-            if user.id not in self._user_buffers:
-                self.add_user(user.id)  # Should not happen, but defensive
-            self._user_buffers[user.id].extend(data.pcm)
-
-    def start(self):
-        """Starts the mixer background task."""
-        if self._mixer_task is None or self._mixer_task.done():
-            self._mixer_task = asyncio.create_task(self._mixer_loop())
-            logger.info("RealtimeMixingSink mixer task started.")
-
-    def _mix_audio_chunks(self, chunks: List[bytes]) -> bytes:
-        """Synchronous function to mix multiple audio chunks."""
-        if not chunks:
-            return self._silence_chunk
-
-        mixed_chunk = chunks[0]
-        for chunk in chunks[1:]:
-            # audioop.add requires both chunks to be the same length
-            if len(chunk) == len(mixed_chunk):
-                mixed_chunk = audioop.add(mixed_chunk, chunk, Config.SAMPLE_WIDTH)
-        return mixed_chunk
-
-    async def _mixer_loop(self):
-        """The background loop that mixes audio at regular intervals."""
-        try:
-            while True:
-                # Sleep for 20ms, the duration of one Discord audio frame
-                await asyncio.sleep(0.02)
-
-                chunks_to_mix = []
-                for user_id in self._consented_users:
-                    buffer = self._user_buffers.get(user_id)
-                    if buffer and len(buffer) >= self._chunk_size:
-                        # User has audio data, slice it
-                        chunks_to_mix.append(buffer[: self._chunk_size])
-                        del buffer[: self._chunk_size]
-                    else:
-                        # User is silent, pad with silence
-                        chunks_to_mix.append(self._silence_chunk)
-
-                if chunks_to_mix:
-                    mixed_audio = await self._loop.run_in_executor(
-                        None, self._mix_audio_chunks, chunks_to_mix
-                    )
-                    await self.output_queue.put(mixed_audio)
-        except asyncio.CancelledError:
-            logger.info("RealtimeMixingSink mixer task cancelled.")
-        except Exception as e:
-            logger.error(f"Error in RealtimeMixingSink mixer loop: {e}", exc_info=True)
-
-
 class ManualControlSink(AudioSink):
     """
-    An audio sink for the 'ManualControl' mode - request/response interaction model.
+    An audio sink for request/response voice interaction.
 
     OVERVIEW:
-    This sink implements a sophisticated dual-mode audio processor that alternates
+    This sink implements a sophisticated audio processor that alternates
     between listening for wake words from all users and recording commands from
     a single authority user. It coordinates wake word detection, voice activity
     detection, and audio buffering for command processing.
 
-    OPERATIONAL MODES:
+    OPERATIONAL STATES:
 
     1. STANDBY MODE (bot_state.current_state == BotStateEnum.STANDBY):
        - Continuous parallel wake word detection for all consented users

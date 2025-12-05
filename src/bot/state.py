@@ -38,20 +38,6 @@ class ProviderChangedEvent:
     new_provider_name: str
 
 
-class BotModeEnum(Enum):
-    """Enumeration of the bot's high-level operational modes."""
-
-    RealtimeTalk = "realtime_talk"
-    ManualControl = "manual_control"
-
-
-@dataclass
-class ModeChangedEvent:
-    """Event fired when the bot's mode changes."""
-
-    new_mode: "BotModeEnum"
-
-
 class RecordingMethod(Enum):
     """Enumeration of methods for starting a recording."""
 
@@ -59,7 +45,7 @@ class RecordingMethod(Enum):
     WakeWord = auto()
 
 
-StateEvent = Union[StateChangedEvent, ProviderChangedEvent, ModeChangedEvent]
+StateEvent = Union[StateChangedEvent, ProviderChangedEvent]
 
 
 class BotStateEnum(Enum):
@@ -71,13 +57,8 @@ class BotStateEnum(Enum):
     """
 
     IDLE = "idle"
-    # --- ManualControl States ---
     STANDBY = "standby"
     RECORDING = "recording"
-    # --- RealtimeTalk States ---
-    LISTENING = "listening"
-    SPEAKING = "speaking"
-    # --- Shared State ---
     CONNECTION_ERROR = "connection_error"
 
 
@@ -98,9 +79,6 @@ class BotState:
 
         The bot starts in IDLE state with no specific authority user.
         """
-        # The high-level operational mode (e.g., ManualControl, RealtimeTalk).
-        self._mode: BotModeEnum = BotModeEnum.ManualControl
-        # The specific state within the current mode (e.g., STANDBY, RECORDING).
         self._current_state: BotStateEnum = BotStateEnum.IDLE
         # How the current recording was initiated (e.g., WakeWord, PushToTalk).
         self._recording_method: Optional[RecordingMethod] = None
@@ -157,11 +135,6 @@ class BotState:
             str: The display name of the authority user.
         """
         return self._authority_user_name
-
-    @property
-    def mode(self) -> BotModeEnum:
-        """Get the current operational mode of the bot."""
-        return self._mode
 
     def get_consented_user_ids(self) -> Set[int]:
         """Get a copy of the set of user IDs who have consented to be recorded."""
@@ -226,23 +199,6 @@ class BotState:
             return
         self._active_ai_provider_name = provider_name
         event = ProviderChangedEvent(new_provider_name=provider_name)
-        await self._notify_listeners(event)
-
-    async def set_mode(self, new_mode: BotModeEnum) -> None:
-        """
-        Set the operational mode of the bot.
-
-        This should be called by GuildSession during initialization or mode switching.
-        Note: This does not change the bot's state (e.g., STANDBY, RECORDING),
-        which must be managed separately.
-
-        Args:
-            new_mode: The new operational mode to set.
-        """
-        if self._mode == new_mode:
-            return
-        self._mode = new_mode
-        event = ModeChangedEvent(new_mode=new_mode)
         await self._notify_listeners(event)
 
     async def set_state(self, new_state: BotStateEnum) -> bool:

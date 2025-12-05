@@ -54,9 +54,7 @@ class Config:
     CHUNK_DURATION_MS: int = 500  # Duration of audio chunks in milliseconds
 
     # --- UI/UX Settings ---
-    REACTION_GRANT_CONSENT: str = os.getenv("REACTION_GRANT_CONSENT", "🙏")
-    REACTION_MODE_MANUAL: str = os.getenv("REACTION_MODE_MANUAL", "🙋")
-    REACTION_MODE_REALTIME: str = os.getenv("REACTION_MODE_REALTIME", "🗣️")
+    REACTION_GRANT_CONSENT: str = os.getenv("REACTION_GRANT_CONSENT", "👂")
     REACTION_TRIGGER_PTT: str = os.getenv("REACTION_TRIGGER_PTT", "🎙️")
 
     # --- Audio Cue Paths ---

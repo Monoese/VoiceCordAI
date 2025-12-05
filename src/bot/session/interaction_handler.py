@@ -58,8 +58,6 @@ class InteractionHandler:
 
         if emoji == Config.REACTION_GRANT_CONSENT:
             await self.guild_session.handle_consent_reaction(user, added=True)
-        elif emoji in (Config.REACTION_MODE_MANUAL, Config.REACTION_MODE_REALTIME):
-            await self.guild_session.handle_mode_switch_reaction(user, emoji)
         elif emoji == Config.REACTION_TRIGGER_PTT:
             await self.guild_session.handle_pushtotalk_reaction(user, added=True)
 
