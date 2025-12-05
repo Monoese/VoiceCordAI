@@ -21,8 +21,7 @@ class StateTransitionValidator:
     # Map of valid state transitions: from_state -> {valid_to_states}
     _VALID_TRANSITIONS = {
         BotStateEnum.IDLE: {
-            BotStateEnum.STANDBY,  # Manual connect
-            BotStateEnum.LISTENING,  # Realtime connect
+            BotStateEnum.STANDBY,  # Connect to voice channel
         },
         BotStateEnum.STANDBY: {
             BotStateEnum.RECORDING,  # PTT/wake word activated
@@ -33,18 +32,8 @@ class StateTransitionValidator:
             BotStateEnum.STANDBY,  # Recording finished
             BotStateEnum.CONNECTION_ERROR,  # Connection issues
         },
-        BotStateEnum.LISTENING: {
-            BotStateEnum.SPEAKING,  # AI starts talking
-            BotStateEnum.IDLE,  # Disconnect
-            BotStateEnum.CONNECTION_ERROR,  # Connection issues
-        },
-        BotStateEnum.SPEAKING: {
-            BotStateEnum.LISTENING,  # AI stops talking
-            BotStateEnum.CONNECTION_ERROR,  # Connection issues
-        },
         BotStateEnum.CONNECTION_ERROR: {
-            BotStateEnum.STANDBY,  # Recovery to manual mode
-            BotStateEnum.LISTENING,  # Recovery to realtime mode
+            BotStateEnum.STANDBY,  # Recovery
             BotStateEnum.IDLE,  # Disconnect/give up
         },
     }

@@ -144,7 +144,7 @@ After using `/connect`, the bot posts a status message. Use reactions on that me
     - *Note: You can use a custom wake word by replacing the file in `assets/wakeword_models` with any model compatible with [openWakeWord](https://github.com/dscripka/openWakeWord).*
 
 **Other Controls:**
-- **Add 🙏 Reaction:** Give or revoke consent for your voice to be recorded. You must grant consent to use the wake word feature.
+- **Add 👂 Reaction:** Give or revoke consent for your voice to be recorded. You must grant consent to use the wake word feature.
 
 ## Running with Docker
 

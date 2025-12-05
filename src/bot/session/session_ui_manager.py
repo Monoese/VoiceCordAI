@@ -45,8 +45,8 @@ class SessionUIManager:
             )
         return ", ".join(names)
 
-    def _get_manual_control_content(self) -> str:
-        """Generates the UI content for ManualControl mode."""
+    def _get_status_content(self) -> str:
+        """Generates the UI content for the current session status."""
         state = self.bot_state.current_state
         state_info = ""
 
@@ -63,7 +63,7 @@ class SessionUIManager:
         wake_word = model_filename.split("_")[0].capitalize()
 
         return (
-            f"**🎙️ Voice Chat Session - Manual Control**\n\n"
+            f"**🎙️ Voice Chat Session**\n\n"
             f"---\n"
             f"### Instructions\n"
             f"- **Push-to-Talk**: React with {Config.REACTION_TRIGGER_PTT} to start/stop recording.\n"
@@ -75,38 +75,8 @@ class SessionUIManager:
             f"- **Consented Users for Wake Word**: {consented_users}"
         )
 
-    def _get_realtime_talk_content(self) -> str:
-        """Generates the UI content for RealtimeTalk mode."""
-        state = self.bot_state.current_state
-        state_info = ""
-
-        if state == BotStateEnum.LISTENING:
-            state_info = "Actively listening..."
-        elif state == BotStateEnum.SPEAKING:
-            state_info = "AI is speaking..."
-
-        consented_users = self._get_consented_user_list()
-        user_list_title = (
-            "Streaming Audio From"
-            if consented_users != "No one has consented yet."
-            else "Consented Users"
-        )
-
-        return (
-            f"**🗣️ Voice Chat Session - Realtime Talk**\n\n"
-            f"---\n"
-            f"### Instructions\n"
-            f"- **Speak Freely**: The AI will manage turn-taking automatically.\n"
-            f"- **Give Consent**: React with {Config.REACTION_GRANT_CONSENT} to grant/revoke consent.\n"
-            f"- **Switch Mode**: React with {Config.REACTION_MODE_MANUAL} to switch to Manual Control.\n"
-            f"---\n"
-            f"### Status\n"
-            f"- **State**: `{state_info}`\n"
-            f"- **{user_list_title}**: {consented_users}"
-        )
-
     def get_message_content(self) -> str:
-        """Generate the standby message content based on the current mode and state."""
+        """Generate the standby message content based on the current state."""
         if self.bot_state.current_state == BotStateEnum.CONNECTION_ERROR:
             return (
                 f"**⚠️ Voice Chat Session - CONNECTION ERROR **\n\n"
@@ -116,7 +86,7 @@ class SessionUIManager:
                 f"- **Action**: Try `{Config.COMMAND_PREFIX}disconnect` and then `{Config.COMMAND_PREFIX}connect` again."
             )
 
-        mode_content = self._get_manual_control_content()
+        status_content = self._get_status_content()
 
         shared_content = (
             f"---\n"
@@ -124,7 +94,7 @@ class SessionUIManager:
             f"Use `{Config.COMMAND_PREFIX}set <name>` (e.g., openai, gemini) to switch."
         )
 
-        return f"{mode_content}\n{shared_content}"
+        return f"{status_content}\n{shared_content}"
 
     async def _update_message(self) -> None:
         """Update the standby message with the current state."""

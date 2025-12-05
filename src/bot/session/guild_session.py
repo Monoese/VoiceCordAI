@@ -22,12 +22,12 @@ from src.audio.processing import (
     ProcessingStrategy,
     DISCORD_FORMAT,
 )
-from src.audio.sinks import ManualControlSink, RealtimeMixingSink
+from src.audio.sinks import ManualControlSink
 from src.bot.session.ai_service_coordinator import AIServiceCoordinator
 from src.bot.session.interaction_handler import InteractionHandler
 from src.bot.session.session_ui_manager import SessionUIManager
 from src.bot.session.voice_connection_manager import VoiceConnectionManager
-from src.bot.state import BotState, BotModeEnum, BotStateEnum, RecordingMethod
+from src.bot.state import BotState, BotStateEnum, RecordingMethod
 from src.config.config import Config
 from src.exceptions import SessionConsistencyError
 from src.utils.logger import get_logger
@@ -203,22 +203,6 @@ class GuildSession:
                     self._audio_sink.remove_user(user.id)
             self.ui_manager.schedule_update()
 
-    async def handle_mode_switch_reaction(self, user: discord.User, emoji: str) -> None:
-        async with self._action_lock:
-            member = self.guild.get_member(user.id)
-            # Permission checks: User must be in a voice channel and have given consent.
-            if not member or not member.voice or not member.voice.channel:
-                return
-            if user.id not in self.bot_state.get_consented_user_ids():
-                return
-
-            new_mode = (
-                BotModeEnum.ManualControl
-                if emoji == Config.REACTION_MODE_MANUAL
-                else BotModeEnum.RealtimeTalk
-            )
-            await self.switch_mode(new_mode)
-
     async def _interrupt_ongoing_playback(self) -> None:
         """Interrupts any ongoing audio playback and AI response generation.
 
@@ -236,9 +220,6 @@ class GuildSession:
 
     async def handle_pushtotalk_reaction(self, user: discord.User, added: bool) -> None:
         async with self._action_lock:
-            if self.bot_state.mode != BotModeEnum.ManualControl:
-                return
-
             if added and self.bot_state.current_state == BotStateEnum.STANDBY:
                 # Interrupt any ongoing playback before starting recording
                 await self._interrupt_ongoing_playback()
@@ -274,10 +255,7 @@ class GuildSession:
             f"GuildSession: Received on_wake_word_detected event for user {user.id}"
         )
         async with self._action_lock:
-            if (
-                self.bot_state.mode != BotModeEnum.ManualControl
-                or self.bot_state.current_state != BotStateEnum.STANDBY
-            ):
+            if self.bot_state.current_state != BotStateEnum.STANDBY:
                 return
 
             # Interrupt any ongoing playback before starting recording
@@ -326,7 +304,7 @@ class GuildSession:
             task.add_done_callback(self._background_tasks.discard)
 
     async def _process_manual_audio_task(self, audio_data: bytes) -> None:
-        """Task to process a finished audio recording from ManualControl mode."""
+        """Task to process a finished audio recording."""
         # Cross-session corruption fix: Capture session ID at start of processing
         session_id = self.bot_state.current_session_id
 
@@ -392,83 +370,20 @@ class GuildSession:
                     f"{self.bot_state.current_session_id}. Not entering error state to avoid corruption."
                 )
 
-    async def _realtime_audio_streamer_task(self) -> None:
-        """Task to continuously stream audio from RealtimeMixingSink to the AI."""
-        if not isinstance(self._audio_sink, RealtimeMixingSink):
-            return
-        try:
-            while True:
-                chunk = await self._audio_sink.output_queue.get()
-                if not await self.ai_coordinator.send_audio_chunk(chunk):
-                    await self.bot_state.enter_connection_error_state()
-                    break
-                self._audio_sink.output_queue.task_done()
-        except asyncio.CancelledError:
-            logger.info(
-                f"Realtime audio streamer task cancelled for guild {self.guild.id}."
-            )
-        except Exception as e:
-            logger.error(
-                f"Unexpected error in realtime audio streamer: {e}", exc_info=True
-            )
-            await self.bot_state.enter_connection_error_state()
-
     async def _initialize_sink(self) -> None:
-        """Creates and starts the appropriate audio sink based on the current mode."""
+        """Creates and starts the audio sink for voice processing."""
         consented_users = self.bot_state.get_consented_user_ids()
-        if self.bot_state.mode == BotModeEnum.ManualControl:
-            self._audio_sink = ManualControlSink(
-                bot_state=self.bot_state,
-                initial_consented_users=consented_users,
-                on_wake_word_detected=self.on_wake_word_detected,
-                on_vad_speech_end=self.on_vad_speech_end,
-                action_lock=self._action_lock,
-            )
-        elif self.bot_state.mode == BotModeEnum.RealtimeTalk:
-            self._audio_sink = RealtimeMixingSink(
-                bot_state=self.bot_state, initial_consented_users=consented_users
-            )
-            task = asyncio.create_task(self._realtime_audio_streamer_task())
-            self._background_tasks.add(task)
-            task.add_done_callback(self._background_tasks.discard)
-        else:
-            self._audio_sink = None
+        self._audio_sink = ManualControlSink(
+            bot_state=self.bot_state,
+            initial_consented_users=consented_users,
+            on_wake_word_detected=self.on_wake_word_detected,
+            on_vad_speech_end=self.on_vad_speech_end,
+            action_lock=self._action_lock,
+        )
+        self.voice_connection.start_listening(self._audio_sink)
+        logger.info("Initialized ManualControlSink for voice processing")
 
-        if self._audio_sink:
-            self.voice_connection.start_listening(self._audio_sink)
-            logger.info(f"Initialized audio sink for mode: {self.bot_state.mode.value}")
-
-    async def switch_mode(self, new_mode: BotModeEnum) -> None:
-        """Switches the bot operational mode, performing a hard reset of the audio state."""
-        if self.bot_state.mode == new_mode:
-            return
-
-        logger.info(f"Switching mode to {new_mode.value}")
-
-        # Mode switch race fix: Ensure proper cleanup coordination
-        async with self._action_lock:
-            # Cleanup old sink with coordination
-            if self._audio_sink:
-                # First, stop voice connection from sending more audio to sink
-                self.voice_connection.stop_listening()
-
-                # Now cleanup the sink safely
-                if hasattr(self._audio_sink, "cleanup"):
-                    self._audio_sink.cleanup()
-                self._audio_sink = None
-
-            await self.bot_state.set_mode(new_mode)
-            await self._initialize_sink()
-
-            # Set default state for the new mode
-            if new_mode == BotModeEnum.ManualControl:
-                await self.bot_state.set_state(BotStateEnum.STANDBY)
-            elif new_mode == BotModeEnum.RealtimeTalk:
-                await self.bot_state.set_state(BotStateEnum.LISTENING)
-
-    async def initialize_session(
-        self, ctx: commands.Context, mode: BotModeEnum
-    ) -> bool:
+    async def initialize_session(self, ctx: commands.Context) -> bool:
         """
         Handles the full connection logic when a user issues a connect command.
         """
@@ -487,25 +402,16 @@ class GuildSession:
             await self.bot_state.enter_connection_error_state()
             return False
 
-        await self.bot_state.set_mode(mode)
-
         if not await self.ui_manager.create(ctx.channel):
             await self.bot_state.reset_to_idle()
             return False
 
         await self._initialize_sink()
-
-        # Set initial state based on mode
-        initial_state = (
-            BotStateEnum.STANDBY
-            if mode == BotModeEnum.ManualControl
-            else BotStateEnum.LISTENING
-        )
-        await self.bot_state.set_state(initial_state)
+        await self.bot_state.set_state(BotStateEnum.STANDBY)
 
         await self.start_background_tasks()
         logger.info(
-            f"Connect command successful for guild {self.guild.id}. Bot is in {initial_state.value}."
+            f"Connect command successful for guild {self.guild.id}. Bot is in STANDBY."
         )
         return True
 

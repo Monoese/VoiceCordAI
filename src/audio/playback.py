@@ -288,9 +288,16 @@ class AudioPlaybackManager:
 
     async def _manager_loop(self) -> None:
         """Main loop that manages starting and stopping playback monitors."""
+        logger.debug(f"Manager loop for guild {self.guild.id}: Entering main loop.")
         try:
             while True:
+                logger.debug(
+                    f"Manager loop for guild {self.guild.id}: Waiting for playback control event..."
+                )
                 await self._playback_control_event.wait()
+                logger.debug(
+                    f"Manager loop for guild {self.guild.id}: Event received, processing stream '{self._current_stream_id}'."
+                )
                 self._playback_control_event.clear()
 
                 if self._monitor_task and not self._monitor_task.done():
@@ -332,6 +339,9 @@ class AudioPlaybackManager:
                     self._monitor_task = asyncio.create_task(
                         self._monitor_playback(new_stream, voice_client)
                     )
+                    logger.debug(
+                        f"Manager loop for guild {self.guild.id}: Monitor task created, continuing loop."
+                    )
                 elif not voice_client or not voice_client.is_connected():
                     logger.warning(
                         f"Manager loop for guild {self.guild.id}: No valid voice client, cannot start playback."
@@ -339,6 +349,11 @@ class AudioPlaybackManager:
 
         except asyncio.CancelledError:
             logger.info(f"Manager loop for guild {self.guild.id} cancelled.")
+        except Exception as e:
+            logger.error(
+                f"Manager loop for guild {self.guild.id} encountered unexpected error: {e}",
+                exc_info=True,
+            )
         finally:
             if self._monitor_task and not self._monitor_task.done():
                 self._monitor_task.cancel()

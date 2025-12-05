@@ -26,7 +26,6 @@ def test_botstate_initialization(bot_state: BotState):
     assert bot_state.current_state == BotStateEnum.IDLE
     assert bot_state.authority_user_id == "anyone"
     assert bot_state.active_ai_provider_name is not None  # Check default is set
-    assert bot_state.mode is not None  # Check mode is set
     assert bot_state.recording_method is None  # No recording method initially
 
 

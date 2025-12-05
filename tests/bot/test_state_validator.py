@@ -17,11 +17,8 @@ class TestStateTransitionValidator:
 
     def test_valid_transitions_from_idle(self):
         """Test all valid transitions from IDLE state."""
-        # IDLE -> STANDBY (manual connect)
+        # IDLE -> STANDBY (connect)
         StateTransitionValidator.validate(BotStateEnum.IDLE, BotStateEnum.STANDBY)
-
-        # IDLE -> LISTENING (realtime connect)
-        StateTransitionValidator.validate(BotStateEnum.IDLE, BotStateEnum.LISTENING)
 
     def test_valid_transitions_from_standby(self):
         """Test all valid transitions from STANDBY state."""
@@ -46,39 +43,11 @@ class TestStateTransitionValidator:
             BotStateEnum.RECORDING, BotStateEnum.CONNECTION_ERROR
         )
 
-    def test_valid_transitions_from_listening(self):
-        """Test all valid transitions from LISTENING state."""
-        # LISTENING -> SPEAKING (AI starts talking)
-        StateTransitionValidator.validate(BotStateEnum.LISTENING, BotStateEnum.SPEAKING)
-
-        # LISTENING -> IDLE (disconnect)
-        StateTransitionValidator.validate(BotStateEnum.LISTENING, BotStateEnum.IDLE)
-
-        # LISTENING -> CONNECTION_ERROR (connection issues)
-        StateTransitionValidator.validate(
-            BotStateEnum.LISTENING, BotStateEnum.CONNECTION_ERROR
-        )
-
-    def test_valid_transitions_from_speaking(self):
-        """Test all valid transitions from SPEAKING state."""
-        # SPEAKING -> LISTENING (AI stops talking)
-        StateTransitionValidator.validate(BotStateEnum.SPEAKING, BotStateEnum.LISTENING)
-
-        # SPEAKING -> CONNECTION_ERROR (connection issues)
-        StateTransitionValidator.validate(
-            BotStateEnum.SPEAKING, BotStateEnum.CONNECTION_ERROR
-        )
-
     def test_valid_transitions_from_connection_error(self):
         """Test all valid transitions from CONNECTION_ERROR state."""
-        # CONNECTION_ERROR -> STANDBY (recovery to manual mode)
+        # CONNECTION_ERROR -> STANDBY (recovery)
         StateTransitionValidator.validate(
             BotStateEnum.CONNECTION_ERROR, BotStateEnum.STANDBY
-        )
-
-        # CONNECTION_ERROR -> LISTENING (recovery to realtime mode)
-        StateTransitionValidator.validate(
-            BotStateEnum.CONNECTION_ERROR, BotStateEnum.LISTENING
         )
 
         # CONNECTION_ERROR -> IDLE (disconnect/give up)
@@ -99,74 +68,20 @@ class TestStateTransitionValidator:
         assert "Invalid state transition from idle to recording" in str(exc_info.value)
 
         with pytest.raises(StateTransitionError):
-            StateTransitionValidator.validate(BotStateEnum.IDLE, BotStateEnum.SPEAKING)
-
-        with pytest.raises(StateTransitionError):
             StateTransitionValidator.validate(
                 BotStateEnum.IDLE, BotStateEnum.CONNECTION_ERROR
             )
 
     def test_invalid_transitions_from_standby(self):
         """Test invalid transitions from STANDBY state."""
-        with pytest.raises(StateTransitionError) as exc_info:
-            StateTransitionValidator.validate(
-                BotStateEnum.STANDBY, BotStateEnum.LISTENING
-            )
-        assert "Invalid state transition from standby to listening" in str(
-            exc_info.value
-        )
-
-        with pytest.raises(StateTransitionError):
-            StateTransitionValidator.validate(
-                BotStateEnum.STANDBY, BotStateEnum.SPEAKING
-            )
+        # No other invalid transitions besides what's already invalid
+        pass
 
     def test_invalid_transitions_from_recording(self):
         """Test invalid transitions from RECORDING state."""
         with pytest.raises(StateTransitionError) as exc_info:
             StateTransitionValidator.validate(BotStateEnum.RECORDING, BotStateEnum.IDLE)
         assert "Invalid state transition from recording to idle" in str(exc_info.value)
-
-        with pytest.raises(StateTransitionError):
-            StateTransitionValidator.validate(
-                BotStateEnum.RECORDING, BotStateEnum.LISTENING
-            )
-
-        with pytest.raises(StateTransitionError):
-            StateTransitionValidator.validate(
-                BotStateEnum.RECORDING, BotStateEnum.SPEAKING
-            )
-
-    def test_invalid_transitions_from_listening(self):
-        """Test invalid transitions from LISTENING state."""
-        with pytest.raises(StateTransitionError) as exc_info:
-            StateTransitionValidator.validate(
-                BotStateEnum.LISTENING, BotStateEnum.STANDBY
-            )
-        assert "Invalid state transition from listening to standby" in str(
-            exc_info.value
-        )
-
-        with pytest.raises(StateTransitionError):
-            StateTransitionValidator.validate(
-                BotStateEnum.LISTENING, BotStateEnum.RECORDING
-            )
-
-    def test_invalid_transitions_from_speaking(self):
-        """Test invalid transitions from SPEAKING state."""
-        with pytest.raises(StateTransitionError) as exc_info:
-            StateTransitionValidator.validate(BotStateEnum.SPEAKING, BotStateEnum.IDLE)
-        assert "Invalid state transition from speaking to idle" in str(exc_info.value)
-
-        with pytest.raises(StateTransitionError):
-            StateTransitionValidator.validate(
-                BotStateEnum.SPEAKING, BotStateEnum.STANDBY
-            )
-
-        with pytest.raises(StateTransitionError):
-            StateTransitionValidator.validate(
-                BotStateEnum.SPEAKING, BotStateEnum.RECORDING
-            )
 
     def test_invalid_transitions_from_connection_error(self):
         """Test invalid transitions from CONNECTION_ERROR state."""
@@ -178,23 +93,15 @@ class TestStateTransitionValidator:
             exc_info.value
         )
 
-        with pytest.raises(StateTransitionError):
-            StateTransitionValidator.validate(
-                BotStateEnum.CONNECTION_ERROR, BotStateEnum.SPEAKING
-            )
-
     def test_error_message_includes_valid_transitions(self):
         """Test that error messages include the list of valid transitions."""
         with pytest.raises(StateTransitionError) as exc_info:
-            StateTransitionValidator.validate(
-                BotStateEnum.STANDBY, BotStateEnum.LISTENING
-            )
+            StateTransitionValidator.validate(BotStateEnum.RECORDING, BotStateEnum.IDLE)
 
         error_message = str(exc_info.value)
-        assert "Invalid state transition from standby to listening" in error_message
-        assert "Valid transitions from standby:" in error_message
-        assert "recording" in error_message
-        assert "idle" in error_message
+        assert "Invalid state transition from recording to idle" in error_message
+        assert "Valid transitions from recording:" in error_message
+        assert "standby" in error_message
         assert "connection_error" in error_message
 
     def test_get_valid_transitions(self):
@@ -203,7 +110,7 @@ class TestStateTransitionValidator:
         valid_from_idle = StateTransitionValidator.get_valid_transitions(
             BotStateEnum.IDLE
         )
-        expected_from_idle = {BotStateEnum.STANDBY, BotStateEnum.LISTENING}
+        expected_from_idle = {BotStateEnum.STANDBY}
         assert valid_from_idle == expected_from_idle
 
         # Test STANDBY state
@@ -224,31 +131,12 @@ class TestStateTransitionValidator:
         expected_from_recording = {BotStateEnum.STANDBY, BotStateEnum.CONNECTION_ERROR}
         assert valid_from_recording == expected_from_recording
 
-        # Test LISTENING state
-        valid_from_listening = StateTransitionValidator.get_valid_transitions(
-            BotStateEnum.LISTENING
-        )
-        expected_from_listening = {
-            BotStateEnum.SPEAKING,
-            BotStateEnum.IDLE,
-            BotStateEnum.CONNECTION_ERROR,
-        }
-        assert valid_from_listening == expected_from_listening
-
-        # Test SPEAKING state
-        valid_from_speaking = StateTransitionValidator.get_valid_transitions(
-            BotStateEnum.SPEAKING
-        )
-        expected_from_speaking = {BotStateEnum.LISTENING, BotStateEnum.CONNECTION_ERROR}
-        assert valid_from_speaking == expected_from_speaking
-
         # Test CONNECTION_ERROR state
         valid_from_error = StateTransitionValidator.get_valid_transitions(
             BotStateEnum.CONNECTION_ERROR
         )
         expected_from_error = {
             BotStateEnum.STANDBY,
-            BotStateEnum.LISTENING,
             BotStateEnum.IDLE,
         }
         assert valid_from_error == expected_from_error
