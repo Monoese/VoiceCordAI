@@ -29,7 +29,7 @@ Follow these steps to set up and run the bot on your local machine or a virtual 
 
 Before you begin, ensure you have the following software installed:
 
-- **Python 3.8 or newer**
+- **Python 3.11 or newer** (tested on 3.13)
 - **FFmpeg**:
   - **Windows**: `winget install -e --id Gyan.FFmpeg`
   - **macOS**: `brew install ffmpeg`
