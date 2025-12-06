@@ -1,6 +1,6 @@
 # Discord Bot Framework
 discord.py>=2.6.0,<3.0
-discord-ext-voice-recv>=0.5.0,<1.0
+discord-ext-voice-recv>=0.5.0a0,<1.0
 
 # Configuration & Environment
 python-dotenv>=1.0.0,<2.0
